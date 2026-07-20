@@ -20,7 +20,9 @@ REDIS_DB=0
 
 DATABASE_URL=sqlite:///dev.db
 
-JWT_SECRET_KEY=dev-secret-change-me
+JWT_SECRET_KEY=dev-secret-key-please-change-me-in-production-32chars
+
+# Nota: en producción usa SIEMPRE una clave segura y definida por variable de entorno (nunca el valor por defecto).
 ```
 
 ## Levantar Redis

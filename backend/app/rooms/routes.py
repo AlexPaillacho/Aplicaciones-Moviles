@@ -46,6 +46,9 @@ def _room_to_dict(room: Room) -> dict:
 # evitando que al iterar sobre rooms se ejecuten consultas adicionales por cada room.
 
 
+# Nota: GET /rooms/list se deja público (sin JWT).
+# Para la demo del video, el objetivo es comparar N+1 (lazy loading) vs eager loading (joinedload)
+# sin que la autenticación afecte el número de queries en la ruta.
 @rooms_bp.route('/rooms/list', methods=['GET'])
 def list_rooms():
     try:
@@ -123,6 +126,7 @@ def process_audio(room_id: str):
 
 
 @rooms_bp.route('/rooms/<room_id>', methods=['PUT'])
+@jwt_user_required()
 def put_room(room_id: str):
     payload = request.get_json(silent=True) or {}
 
@@ -147,6 +151,7 @@ def put_room(room_id: str):
 
 
 @rooms_bp.route('/rooms/<room_id>', methods=['DELETE'])
+@jwt_user_required()
 def delete_room(room_id: str):
     room = Room.query.filter_by(id=room_id).first()
     if not room:

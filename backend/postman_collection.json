@@ -10,6 +10,7 @@
       "request": {
         "method": "POST",
         "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" },
           { "key": "Content-Type", "value": "application/json" }
         ],
         "body": {
@@ -108,6 +109,7 @@
       "request": {
         "method": "PUT",
         "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" },
           { "key": "Content-Type", "value": "application/json" }
         ],
         "body": {

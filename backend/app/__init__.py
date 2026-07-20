@@ -36,7 +36,10 @@ def create_app() -> Flask:
 
     # Clave secreta para firmar JWT
     # Recomendación: en producción usar variable de entorno fuerte.
-    app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'dev-secret-change-me')
+    app.config['JWT_SECRET_KEY'] = os.getenv(
+        'JWT_SECRET_KEY',
+        'dev-secret-key-please-change-me-in-production-32chars',
+    )
 
     # Inicializar extensiones
     db.init_app(app)
