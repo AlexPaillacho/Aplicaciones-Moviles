@@ -1,0 +1,149 @@
+{
+  "info": {
+    "name": "speak_english - backend (Flask + Redis + Celery)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Colección para probar auth, cache-aside, demo N+1 (eager vs lazy) y disparo de Celery."
+  },
+  "item": [
+    {
+      "name": "Register",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"alex\",\n  \"email\": \"alex@example.com\",\n  \"password\": \"123456\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:5000/auth/register",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["auth", "register"]
+        }
+      }
+    },
+    {
+      "name": "Login",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"alex@example.com\",\n  \"password\": \"123456\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:5000/auth/login",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["auth", "login"]
+        }
+      }
+    },
+    {
+      "name": "GET /rooms/list (optimized=false -> N+1)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "http://localhost:5000/rooms/list?optimized=false",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["rooms", "list"],
+          "query": [
+            { "key": "optimized", "value": "false" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "GET /rooms/list (optimized=true -> joinedload host)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "http://localhost:5000/rooms/list?optimized=true",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["rooms", "list"],
+          "query": [
+            { "key": "optimized", "value": "true" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "GET /rooms/<id> (cache miss)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "http://localhost:5000/rooms/1",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["rooms", "1"]
+        }
+      }
+    },
+    {
+      "name": "GET /rooms/<id> (cache hit -> segundo request)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "http://localhost:5000/rooms/1",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["rooms", "1"]
+        }
+      }
+    },
+    {
+      "name": "PUT /rooms/<id> (invalidación de cache)",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Room actualizada\",\n  \"active\": true\n}"
+        },
+        "url": {
+          "raw": "http://localhost:5000/rooms/1",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["rooms", "1"]
+        }
+      }
+    },
+    {
+      "name": "POST /rooms/<id>/process-audio (requiere JWT)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "url": {
+          "raw": "http://localhost:5000/rooms/1/process-audio",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["rooms", "1", "process-audio"]
+        }
+      }
+    }
+  ]
+}
+
