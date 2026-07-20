@@ -126,6 +126,22 @@
       }
     },
     {
+      "name": "DELETE /rooms/<id> (requiere JWT + invalidación cache)",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" }
+        ],
+        "url": {
+          "raw": "http://localhost:5000/rooms/1",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["rooms", "1"]
+        }
+      }
+    },
+    {
       "name": "POST /rooms/<id>/process-audio (requiere JWT)",
       "request": {
         "method": "POST",

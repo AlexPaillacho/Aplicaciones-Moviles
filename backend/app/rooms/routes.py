@@ -128,6 +128,7 @@ def process_audio(room_id: str):
 @rooms_bp.route('/rooms/<room_id>', methods=['PUT'])
 @jwt_user_required()
 def put_room(room_id: str):
+
     payload = request.get_json(silent=True) or {}
 
     room = Room.query.filter_by(id=room_id).first()
@@ -153,6 +154,7 @@ def put_room(room_id: str):
 @rooms_bp.route('/rooms/<room_id>', methods=['DELETE'])
 @jwt_user_required()
 def delete_room(room_id: str):
+
     room = Room.query.filter_by(id=room_id).first()
     if not room:
         return jsonify({'error': 'Room not found'}), 404

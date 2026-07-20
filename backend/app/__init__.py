@@ -38,7 +38,7 @@ def create_app() -> Flask:
     # Recomendación: en producción usar variable de entorno fuerte.
     app.config['JWT_SECRET_KEY'] = os.getenv(
         'JWT_SECRET_KEY',
-        'dev-secret-key-please-change-me-in-production-32chars',
+        'dev-secret-key-please-change-me-in-production-32chars-1234567890-abcdef',
     )
 
     # Inicializar extensiones
