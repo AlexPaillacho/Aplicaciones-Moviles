@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Autoriza tráfico HTTP (sin cifrar) SOLO hacia el backend de desarrollo,
+  no de forma global. Desde Android 9 (API 28) el cleartext está
+  bloqueado por defecto; esto lo habilita de forma acotada, tal como pide
+  el Taller Semana 9.
+
+  IMPORTANTE: este archivo es solo para desarrollo local. Antes de
+  distribuir la app (Play Store, APK de release, etc.) hay que quitar
+  esta excepción o servir el backend por HTTPS.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- 10.0.2.2 es la dirección con la que el emulador de Android
+             alcanza el localhost de la máquina host. -->
+        <domain includeSubdomains="false">10.0.2.2</domain>
+
+        <!-- Si probás en un dispositivo físico conectado a la misma red
+             Wi-Fi que tu backend, descomentá esta línea y reemplazá la IP
+             por la de tu máquina (ej. la que te da `ipconfig`/`ifconfig`): -->
+        <!-- <domain includeSubdomains="false">192.168.1.100</domain> -->
+    </domain-config>
+</network-security-config>

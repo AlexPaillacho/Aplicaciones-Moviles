@@ -72,9 +72,17 @@ La URL base del backend se inyecta en tiempo de compilación con `--dart-define`
 flutter run --dart-define=API_BASE_URL=http://10.0.2.2:5000
 ```
 
-En un dispositivo físico en la misma red, usa la IP local de tu máquina en vez de `10.0.2.2`.
+En un dispositivo físico en la misma red, usa la IP local de tu máquina en vez de `10.0.2.2` — y agrega esa IP en `android/app/src/main/res/xml/network_security_config.xml` (ver nota abajo).
 
 Al conectar el celular/emulador por primera vez, la app pedirá permiso de micrófono (`RECORD_AUDIO` en Android) para poder grabar la práctica.
+
+### Tráfico HTTP hacia el backend local (solo desarrollo)
+
+El backend corre por HTTP (sin TLS) en desarrollo. Desde Android 9 (API 28), el sistema bloquea tráfico sin cifrar por defecto, así que el proyecto define `android/app/src/main/res/xml/network_security_config.xml`, que autoriza cleartext **únicamente** hacia `10.0.2.2` (el emulador). Si probás en un dispositivo físico, agregá ahí la IP local de tu máquina.
+
+`AndroidManifest.xml` referencia ese archivo con `android:networkSecurityConfig="@xml/network_security_config"`.
+
+> Esta excepción es solo para desarrollo local. Antes de distribuir la app (Play Store, APK de release, etc.) hay que quitarla o servir el backend por HTTPS.
 
 ## Flujo de pantallas
 
