@@ -1,30 +1,39 @@
-// This is a basic Flutter widget test.
+// Fase 6: reemplaza el smoke test del contador (que probaba el demo de
+// conectividad del taller, ya movido a screens/home/home_screen.dart y
+// fuera de las rutas de la app real).
 //
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+// Verifica que login_screen renderiza los campos email/password y el
+// botón "Ingresar", sin depender de la red: AuthProvider se monta con
+// sus valores por defecto (isLoading == false) y el test nunca toca el
+// botón, así que no dispara ninguna llamada HTTP real.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 
-import 'package:speak_english/app.dart';
+import 'package:speak_english/screens/auth/login_screen.dart';
+import 'package:speak_english/state/auth_provider.dart';
+import 'package:speak_english/widgets/app_text_field.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const App());
+  testWidgets('LoginScreen renderiza email, contraseña y el botón Ingresar',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      ChangeNotifierProvider<AuthProvider>(
+        create: (_) => AuthProvider(),
+        child: const MaterialApp(home: LoginScreen()),
+      ),
+    );
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    // Dos campos de texto: email y contraseña.
+    expect(find.byType(AppTextField), findsNWidgets(2));
+    expect(find.text('Email'), findsOneWidget);
+    expect(find.text('Contraseña'), findsOneWidget);
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    // Botón "Ingresar" (distinto del título del AppBar, que dice lo mismo).
+    expect(find.widgetWithText(ElevatedButton, 'Ingresar'), findsOneWidget);
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // Enlace a registro.
+    expect(find.text('¿No tienes cuenta? Regístrate'), findsOneWidget);
   });
 }
