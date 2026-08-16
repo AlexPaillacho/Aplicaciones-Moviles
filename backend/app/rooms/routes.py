@@ -102,6 +102,25 @@ def get_room(room_id: str):
     return jsonify({'source': 'db', 'room': room_dict}), 200
 
 
+@rooms_bp.route('/rooms', methods=['POST'])
+@jwt_user_required()
+def create_room():
+    payload = request.get_json(silent=True) or {}
+    name = payload.get('name')
+
+    if not name:
+        return jsonify({'error': 'name es requerido'}), 400
+
+    host_id = int(get_jwt_identity())
+
+    room = Room(name=name, active=True, host_id=host_id)
+    db.session.add(room)
+    db.session.commit()
+
+    room = Room.query.options(joinedload(Room.host)).filter_by(id=room.id).first()
+    return jsonify({'created': True, 'room': _room_to_dict(room)}), 201
+
+
 @rooms_bp.route('/rooms/<room_id>/process-audio', methods=['POST'])
 @jwt_user_required()
 def process_audio(room_id: str):

@@ -4,21 +4,27 @@ import 'package:provider/provider.dart';
 import 'core/theme.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/register_screen.dart';
-import 'screens/home/home_screen.dart';
+import 'screens/rooms/rooms_list_screen.dart';
 import 'state/auth_provider.dart';
+import 'state/rooms_provider.dart';
 
 /// Widget raíz de la app.
 ///
-/// Provee `AuthProvider` a todo el árbol y define las rutas nombradas
-/// `/login`, `/register`, `/home`. La ruta inicial es `AuthGate`, que
-/// decide a dónde ir según si hay una sesión restaurable.
+/// Provee `AuthProvider` y `RoomsProvider` a todo el árbol y define las
+/// rutas nombradas `/login`, `/register`, `/home`. La ruta inicial es
+/// `AuthGate`, que decide a dónde ir según si hay una sesión restaurable.
+/// A partir de la Fase 3, la pantalla principal tras login es
+/// `RoomsListScreen`.
 class App extends StatelessWidget {
   const App({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => AuthProvider(),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider(create: (_) => RoomsProvider()),
+      ],
       child: MaterialApp(
         title: 'Speak English',
         theme: buildAppTheme(),
@@ -26,7 +32,7 @@ class App extends StatelessWidget {
         routes: {
           '/login': (_) => const LoginScreen(),
           '/register': (_) => const RegisterScreen(),
-          '/home': (_) => const HomeScreen(title: 'Speak English'),
+          '/home': (_) => const RoomsListScreen(),
         },
       ),
     );
@@ -37,8 +43,8 @@ class App extends StatelessWidget {
 ///
 /// Al montarse, intenta restaurar la sesión (`GET /auth/me` con el
 /// token guardado, si existe). Mientras eso ocurre, muestra un loader.
-/// Cuando termina: si quedó autenticado, muestra `HomeScreen`; si no,
-/// `LoginScreen`.
+/// Cuando termina: si quedó autenticado, muestra `RoomsListScreen`;
+/// si no, `LoginScreen`.
 class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
 
@@ -63,8 +69,6 @@ class _AuthGateState extends State<AuthGate> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    return authProvider.isAuthenticated
-        ? const HomeScreen(title: 'Speak English')
-        : const LoginScreen();
+    return authProvider.isAuthenticated ? const RoomsListScreen() : const LoginScreen();
   }
 }
