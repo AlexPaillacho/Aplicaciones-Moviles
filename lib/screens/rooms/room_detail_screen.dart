@@ -1,5 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:record/record.dart';
 
 import '../../models/room.dart';
 import '../../services/api_service.dart';
@@ -11,7 +15,10 @@ import '../../widgets/loading_indicator.dart';
 /// Detalle de una sala.
 ///
 /// Botón "Eliminar" visible solo si `room.hostId == currentUser.id`.
-/// La grabación y envío de audio se agrega en la Fase 4.
+/// Fase 4: graba audio con `package:record`, lo envía a
+/// `POST /rooms/<id>/process-audio` y hace polling a
+/// `GET /tasks/<task_id>` (cada 2s, máx. 10 intentos) hasta obtener
+/// `SUCCESS`/`FAILURE`.
 class RoomDetailScreen extends StatefulWidget {
   const RoomDetailScreen({super.key, required this.roomId});
 
@@ -23,16 +30,28 @@ class RoomDetailScreen extends StatefulWidget {
 
 class _RoomDetailScreenState extends State<RoomDetailScreen> {
   final _roomsService = RoomsService(ApiService());
+  final _recorder = AudioRecorder();
 
   Room? _room;
   bool _isLoading = true;
   String? _errorMessage;
   bool _isDeleting = false;
 
+  bool _isRecording = false;
+  bool _isProcessing = false;
+  String? _audioStatusMessage;
+  Map<String, dynamic>? _taskResult;
+
   @override
   void initState() {
     super.initState();
     _loadRoom();
+  }
+
+  @override
+  void dispose() {
+    _recorder.dispose();
+    super.dispose();
   }
 
   Future<void> _loadRoom() async {
@@ -70,6 +89,95 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
     }
   }
 
+  Future<void> _toggleRecording() async {
+    if (_isRecording) {
+      final path = await _recorder.stop();
+      if (!mounted) return;
+      setState(() => _isRecording = false);
+      if (path != null) {
+        await _sendAudio(File(path));
+      }
+      return;
+    }
+
+    if (!await _recorder.hasPermission()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Se necesita permiso de micrófono')),
+      );
+      return;
+    }
+
+    final dir = await getTemporaryDirectory();
+    final path =
+        '${dir.path}/room_${widget.roomId}_${DateTime.now().millisecondsSinceEpoch}.m4a';
+
+    await _recorder.start(const RecordConfig(), path: path);
+    if (!mounted) return;
+    setState(() => _isRecording = true);
+  }
+
+  Future<void> _sendAudio(File audioFile) async {
+    setState(() {
+      _isProcessing = true;
+      _taskResult = null;
+      _audioStatusMessage = 'Enviando audio...';
+    });
+
+    try {
+      final data = await _roomsService.processAudio(widget.roomId, audioFile);
+      final taskId = data['task_id'] as String;
+      if (!mounted) return;
+      setState(() => _audioStatusMessage = 'Procesando...');
+      await _pollTaskStatus(taskId);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isProcessing = false;
+        _audioStatusMessage = 'No se pudo enviar el audio';
+      });
+    }
+  }
+
+  /// Polling a `GET /tasks/<task_id>` cada 2 segundos, máximo 10 intentos,
+  /// hasta recibir `state == "SUCCESS"` o `"FAILURE"`.
+  Future<void> _pollTaskStatus(String taskId) async {
+    for (var attempt = 0; attempt < 10; attempt++) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      if (!mounted) return;
+
+      try {
+        final status = await _roomsService.getTaskStatus(taskId);
+        final state = status['state'] as String?;
+
+        if (state == 'SUCCESS') {
+          setState(() {
+            _isProcessing = false;
+            _taskResult = status['result'] as Map<String, dynamic>?;
+            _audioStatusMessage = null;
+          });
+          return;
+        }
+
+        if (state == 'FAILURE') {
+          setState(() {
+            _isProcessing = false;
+            _audioStatusMessage = 'Error al procesar el audio';
+          });
+          return;
+        }
+      } catch (_) {
+        // Se reintenta en el próximo intento del loop.
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _isProcessing = false;
+      _audioStatusMessage = 'El procesamiento está tardando más de lo esperado';
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentUser = context.watch<AuthProvider>().currentUser;
@@ -95,6 +203,8 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
           Text('Estado: ${room.active ? 'Activa' : 'Inactiva'}'),
           const SizedBox(height: 8),
           Text('Host: ${room.hostUsername ?? '—'}'),
+          const SizedBox(height: 24),
+          _buildRecordingSection(),
           const Spacer(),
           if (isHost)
             SizedBox(
@@ -116,6 +226,42 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildRecordingSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ElevatedButton.icon(
+          onPressed: _isProcessing ? null : _toggleRecording,
+          icon: Icon(_isRecording ? Icons.stop : Icons.mic),
+          label: Text(_isRecording ? 'Detener grabación' : 'Grabar práctica'),
+        ),
+        if (_isProcessing) ...[
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const SizedBox(
+                height: 16,
+                width: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 8),
+              Text(_audioStatusMessage ?? 'Procesando...'),
+            ],
+          ),
+        ],
+        if (!_isProcessing && _audioStatusMessage != null) ...[
+          const SizedBox(height: 12),
+          Text(_audioStatusMessage!),
+        ],
+        if (_taskResult != null) ...[
+          const SizedBox(height: 12),
+          Text('Resultado: ${_taskResult!['status']}'),
+          if (_taskResult!['detail'] != null) Text('${_taskResult!['detail']}'),
+        ],
+      ],
     );
   }
 }

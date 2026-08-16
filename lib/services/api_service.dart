@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -113,6 +114,26 @@ class ApiService {
       _buildUri(path),
       headers: {if (token != null) 'Authorization': 'Bearer $token'},
     );
+    if (response.statusCode == 401) {
+      throw const UnauthorizedException();
+    }
+    return response;
+  }
+
+  /// POST multipart autenticado (se necesita en la Fase 4 para enviar el
+  /// audio grabado a `POST /rooms/<id>/process-audio`, campo `audio`).
+  Future<http.Response> authorizedMultipartPost(
+    String path, {
+    required String fileField,
+    required File file,
+  }) async {
+    final token = await _tokenStorage.readToken();
+    final request = http.MultipartRequest('POST', _buildUri(path))
+      ..headers.addAll({if (token != null) 'Authorization': 'Bearer $token'})
+      ..files.add(await http.MultipartFile.fromPath(fileField, file.path));
+
+    final streamedResponse = await _client.send(request);
+    final response = await http.Response.fromStream(streamedResponse);
     if (response.statusCode == 401) {
       throw const UnauthorizedException();
     }

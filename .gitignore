@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Backend: audios de prueba subidos, no se versionan
+backend/instance/uploads/

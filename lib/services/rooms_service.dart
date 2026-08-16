@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import '../models/room.dart';
 import 'api_service.dart';
@@ -65,8 +66,8 @@ class RoomsService {
   /// `PUT /rooms/<id>` (JWT).
   Future<void> updateRoom(int id, {String? name, bool? active}) async {
     final body = <String, dynamic>{
-      if (name != null) 'name': name,
-      if (active != null) 'active': active,
+      'name': ?name,
+      'active': ?active,
     };
     final response = await _apiService.authorizedPut('/rooms/$id', body: body);
 
@@ -82,6 +83,33 @@ class RoomsService {
     if (response.statusCode != 200) {
       throw RoomException(_extractError(response.body));
     }
+  }
+
+  /// `POST /rooms/<id>/process-audio` (JWT, multipart, campo `audio`).
+  /// Responde 202 con `{message, task_id, saved_file}`.
+  Future<Map<String, dynamic>> processAudio(int roomId, File audioFile) async {
+    final response = await _apiService.authorizedMultipartPost(
+      '/rooms/$roomId/process-audio',
+      fileField: 'audio',
+      file: audioFile,
+    );
+
+    if (response.statusCode != 202) {
+      throw RoomException(_extractError(response.body));
+    }
+
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  /// `GET /tasks/<task_id>` (JWT). Responde `{task_id, state, result?, error?}`.
+  Future<Map<String, dynamic>> getTaskStatus(String taskId) async {
+    final response = await _apiService.authorizedGet('/tasks/$taskId');
+
+    if (response.statusCode != 200) {
+      throw RoomException(_extractError(response.body));
+    }
+
+    return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
   String _extractError(String responseBody) {

@@ -1,13 +1,16 @@
 import json
+import os
+import time
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity
 from sqlalchemy.orm import joinedload
+from werkzeug.utils import secure_filename
 
 from app import db
 from app.cache import redis_client
 from app.models import Room
-from app.tasks import process_audio_session
+from app.tasks import celery_app, process_audio_session
 
 from app.auth.routes import jwt_user_required
 
@@ -17,6 +20,12 @@ from app.auth.routes import jwt_user_required
 rooms_bp = Blueprint('rooms', __name__)
 
 CACHE_TTL = 300  # Tiempo de vida de la caché: 5 minutos (300 segundos)
+
+UPLOAD_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    'instance', 'uploads',
+)
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 def _cache_key(room_id: str) -> str:
@@ -124,24 +133,38 @@ def create_room():
 @rooms_bp.route('/rooms/<room_id>/process-audio', methods=['POST'])
 @jwt_user_required()
 def process_audio(room_id: str):
-    # Justificación de eager loading vs lazy (en este endpoint):
-    # Aquí no iteramos por muchos objetos ni necesitamos relaciones adicionales.
-    # La relación `host` no se usa directamente en la lógica, por eso no se hace eager.
-    # En general:
-    # - Si una relación se usa siempre al responder (como `Room.host.username` en GET /rooms/<id>),
-    #   conviene eager loading.
-    # - Relaciones grandes y opcionales (ej. messages/participants si existieran) podrían
-    #   quedarse en lazy loading porque no siempre se necesitan.
+    audio_file = request.files.get('audio')
+    saved_filename = None
 
-    # Ejecuta la tarea en segundo plano
+    if audio_file:
+        original_name = secure_filename(audio_file.filename or 'audio.m4a')
+        saved_filename = f"room_{room_id}_{int(time.time())}_{original_name}"
+        audio_file.save(os.path.join(UPLOAD_DIR, saved_filename))
+
     task = process_audio_session.delay(str(room_id))
     return (
         jsonify({
             'message': 'Audio processing started',
             'task_id': task.id,
+            'saved_file': saved_filename,
         }),
         202,
     )
+
+
+@rooms_bp.route('/tasks/<task_id>', methods=['GET'])
+@jwt_user_required()
+def task_status(task_id: str):
+    result = celery_app.AsyncResult(task_id)
+
+    response = {'task_id': task_id, 'state': result.state}
+
+    if result.state == 'SUCCESS':
+        response['result'] = result.result
+    elif result.state == 'FAILURE':
+        response['error'] = str(result.info)
+
+    return jsonify(response), 200
 
 
 @rooms_bp.route('/rooms/<room_id>', methods=['PUT'])
