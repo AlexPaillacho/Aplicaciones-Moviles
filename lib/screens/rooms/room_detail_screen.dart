@@ -63,12 +63,18 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
       final room = await _roomsService.getRoom(widget.roomId);
       if (!mounted) return;
       setState(() => _room = room);
+    } on UnauthorizedException {
+      // El logout y la navegación a /login ya se disparan de forma
+      // centralizada en ApiService.onUnauthorized.
     } on RoomException catch (e) {
+      if (!mounted) return;
+      setState(() => _errorMessage = e.message);
+    } on NetworkException catch (e) {
       if (!mounted) return;
       setState(() => _errorMessage = e.message);
     } catch (_) {
       if (!mounted) return;
-      setState(() => _errorMessage = 'No se pudo conectar al servidor');
+      setState(() => _errorMessage = 'Ocurrió un error inesperado');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -80,6 +86,9 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
       await _roomsService.deleteRoom(widget.roomId);
       if (!mounted) return;
       Navigator.of(context).pop();
+    } on UnauthorizedException {
+      // El logout y la navegación a /login ya se disparan de forma
+      // centralizada en ApiService.onUnauthorized.
     } catch (_) {
       if (!mounted) return;
       setState(() => _isDeleting = false);
@@ -130,6 +139,15 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
       if (!mounted) return;
       setState(() => _audioStatusMessage = 'Procesando...');
       await _pollTaskStatus(taskId);
+    } on UnauthorizedException {
+      // El logout y la navegación a /login ya se disparan de forma
+      // centralizada en ApiService.onUnauthorized.
+    } on NetworkException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isProcessing = false;
+        _audioStatusMessage = e.message;
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -166,6 +184,12 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
           });
           return;
         }
+      } on UnauthorizedException {
+        // El logout y la navegación a /login ya se disparan de forma
+        // centralizada en ApiService.onUnauthorized; no tiene sentido
+        // seguir reintentando.
+        setState(() => _isProcessing = false);
+        return;
       } catch (_) {
         // Se reintenta en el próximo intento del loop.
       }

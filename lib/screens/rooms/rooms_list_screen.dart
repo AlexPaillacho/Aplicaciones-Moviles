@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../services/api_service.dart';
 import '../../state/auth_provider.dart';
 import '../../state/rooms_provider.dart';
 import '../../widgets/error_banner.dart';
@@ -59,6 +60,9 @@ class _RoomsListScreenState extends State<RoomsListScreen> {
 
     try {
       await roomsProvider.create(name);
+    } on UnauthorizedException {
+      // El logout y la navegación a /login ya se disparan de forma
+      // centralizada en ApiService.onUnauthorized.
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

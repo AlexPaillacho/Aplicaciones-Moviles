@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 /// Banner reutilizable para errores de red/backend.
 ///
-/// Stub de la Fase 1. Se completa en la Fase 5.
+/// Usado en `rooms_list_screen.dart` y `room_detail_screen.dart` (Fase 5)
+/// cuando `errorMessage`/`_errorMessage` viene de una `RoomException` o
+/// `NetworkException`.
 class ErrorBanner extends StatelessWidget {
   const ErrorBanner({super.key, required this.message});
 

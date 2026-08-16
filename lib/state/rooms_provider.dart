@@ -29,10 +29,16 @@ class RoomsProvider extends ChangeNotifier {
     notifyListeners();
     try {
       _rooms = await _roomsService.listRooms();
+    } on UnauthorizedException {
+      // El logout y la navegación a /login ya se disparan de forma
+      // centralizada en ApiService.onUnauthorized; no hace falta mostrar
+      // un error acá.
     } on RoomException catch (e) {
       _errorMessage = e.message;
+    } on NetworkException catch (e) {
+      _errorMessage = e.message;
     } catch (_) {
-      _errorMessage = 'No se pudo conectar al servidor';
+      _errorMessage = 'Ocurrió un error inesperado';
     } finally {
       _isLoading = false;
       notifyListeners();
