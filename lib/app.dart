@@ -54,7 +54,7 @@ class _AppState extends State<App> {
       child: MaterialApp(
         navigatorKey: navigatorKey,
         title: 'Speak English',
-        theme: buildAppTheme(),
+        theme: AppTheme.light(),
         home: const AuthGate(),
         routes: {
           '/login': (_) => const LoginScreen(),

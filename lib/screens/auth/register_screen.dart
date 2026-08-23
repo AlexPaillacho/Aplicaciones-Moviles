@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/tokens.dart';
+import '../../services/auth_service.dart';
 import '../../state/auth_provider.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
@@ -43,21 +44,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
     });
 
     final auth = context.read<AuthProvider>();
-    final ok = await auth.register(
-      _usernameController.text.trim(),
-      _emailController.text.trim(),
-      _passwordController.text,
-    );
 
-    if (!mounted) return;
+    try {
+      await auth.register(
+        _usernameController.text.trim(),
+        _emailController.text.trim(),
+        _passwordController.text,
+      );
 
-    setState(() {
-      _loading = false;
-      _error = ok ? null : auth.lastError;
-    });
-
-    if (ok) {
+      if (!mounted) return;
+      setState(() => _loading = false);
       Navigator.of(context).pop();
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'No se pudo conectar al servidor';
+      });
     }
   }
 

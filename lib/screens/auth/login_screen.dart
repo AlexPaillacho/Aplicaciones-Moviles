@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../core/constants.dart';
 import '../../core/tokens.dart';
+import '../../services/auth_service.dart';
 import '../../state/auth_provider.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
@@ -35,20 +35,28 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     final auth = context.read<AuthProvider>();
-    final ok = await auth.login(
-      _emailController.text.trim(),
-      _passwordController.text,
-    );
 
-    if (!mounted) return;
+    try {
+      await auth.login(
+        _emailController.text.trim(),
+        _passwordController.text,
+      );
 
-    setState(() {
-      _loading = false;
-      _error = ok ? null : auth.lastError;
-    });
-
-    if (ok) {
-      Navigator.of(context).pushReplacementNamed(AppRoutes.home);
+      if (!mounted) return;
+      setState(() => _loading = false);
+      Navigator.of(context).pushReplacementNamed('/home');
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'No se pudo conectar al servidor';
+      });
     }
   }
 
@@ -97,7 +105,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 TextButton(
                   onPressed: _loading
                       ? null
-                      : () => Navigator.of(context).pushNamed(AppRoutes.register),
+                      : () => Navigator.of(context).pushNamed('/register'),
                   child: const Text('¿No tienes cuenta? Regístrate'),
                 ),
               ],

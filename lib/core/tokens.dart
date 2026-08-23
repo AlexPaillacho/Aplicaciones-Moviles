@@ -24,16 +24,19 @@ class _Primitive {
   // Espaciado (escala 4pt)
   static const space1 = 4.0;
   static const space2 = 8.0;
-  static const space3 = 12.0;
+  // ignore: unused_field
+  static const space3 = 12.0; // reservado en la escala; sin token semántico aún
   static const space4 = 16.0;
   static const space5 = 24.0;
   static const space6 = 32.0;
   static const space8 = 48.0;
 
   // Radios
-  static const radius1 = 4.0;
+  // ignore: unused_field
+  static const radius1 = 4.0; // reservado en la escala; sin token semántico aún
   static const radius2 = 8.0;
-  static const radius3 = 16.0;
+  // ignore: unused_field
+  static const radius3 = 16.0; // reservado en la escala; sin token semántico aún
   static const radiusPill = 999.0;
 
   // Tipografía
