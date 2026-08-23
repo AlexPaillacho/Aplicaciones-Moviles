@@ -43,9 +43,9 @@ class StatusView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (loading) {
-      return const Center(
+      return Center(
         child: Padding(
-          padding: EdgeInsets.all(AppTokens.spaceXL),
+          padding: const EdgeInsets.all(AppTokens.spaceXL),
           child: Semantics(
             label: 'Cargando contenido',
             child: CircularProgressIndicator(),

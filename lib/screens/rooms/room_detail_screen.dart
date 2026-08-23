@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/tokens.dart';
 import '../../models/room.dart';
+import '../../services/api_service.dart';
 import '../../services/recorder_service.dart';
 import '../../services/rooms_service.dart';
 import '../../state/auth_provider.dart';
@@ -20,7 +21,7 @@ class RoomDetailScreen extends StatefulWidget {
 }
 
 class _RoomDetailScreenState extends State<RoomDetailScreen> {
-  final _roomsService = RoomsService();
+  final _roomsService = RoomsService(ApiService());
   final _recorderService = RecorderService();
 
   Room? _room;
@@ -103,7 +104,8 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
     });
 
     try {
-      final taskId = await _roomsService.processAudio(widget.roomId, audioFile);
+      final response = await _roomsService.processAudio(widget.roomId, audioFile);
+      final taskId = response['task_id'] as String;
       setState(() {
         _isUploading = false;
         _isProcessing = true;

@@ -99,14 +99,14 @@ class _RoomsListViewState extends State<_RoomsListView> {
               child: RefreshIndicator(
                 onRefresh: rooms.refresh,
                 child: StatusView(
-                  loading: rooms.loading && rooms.rooms.isEmpty,
-                  error: rooms.error,
+                  loading: rooms.isLoading && rooms.rooms.isEmpty,
+                  error: rooms.errorMessage,
                   onRetry: rooms.refresh,
                   isEmpty: rooms.rooms.isEmpty,
                   emptyMessage: 'Todavía no hay salas. Crea la primera.',
                   builder: (context) => ListView.separated(
                     itemCount: rooms.rooms.length,
-                    separatorBuilder: (_, __) =>
+                    separatorBuilder: (_, _) =>
                         const SizedBox(height: AppTokens.spaceSM),
                     itemBuilder: (context, index) {
                       final room = rooms.rooms[index];
