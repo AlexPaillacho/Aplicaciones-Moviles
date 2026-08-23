@@ -44,10 +44,11 @@ class NetworkException implements Exception {
 /// y `rooms_service.dart`).
 class ApiService {
   ApiService({
-    this.baseUrl = AppConstants.apiBaseUrl,
+    String? baseUrl,
     http.Client? client,
     TokenStorage? tokenStorage,
-  })  : _client = client ?? http.Client(),
+  })  : baseUrl = baseUrl ?? AppConstants.apiBaseUrl,
+        _client = client ?? http.Client(),
         _tokenStorage = tokenStorage ?? TokenStorage();
 
   final String baseUrl;

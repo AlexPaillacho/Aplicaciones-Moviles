@@ -1,16 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
-import '../../services/auth_service.dart';
+import '../../core/constants.dart';
+import '../../core/tokens.dart';
 import '../../state/auth_provider.dart';
+import '../../widgets/app_button.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/app_text_field.dart';
+import '../../widgets/status_view.dart';
 
-/// Pantalla de inicio de sesión.
-///
-/// Muestra el mensaje de error tal cual lo devuelve el backend
-/// (`AuthException.message`, que viene de la clave `error` del JSON).
-/// Si el login es exitoso, `app.dart` navega a `/home` automáticamente
-/// al escuchar el cambio en `AuthProvider.isAuthenticated`.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -21,7 +18,8 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  String? _errorMessage;
+  bool _loading = false;
+  String? _error;
 
   @override
   void dispose() {
@@ -31,51 +29,80 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _submit() async {
-    setState(() => _errorMessage = null);
-    final authProvider = context.read<AuthProvider>();
-    try {
-      await authProvider.login(_emailController.text.trim(), _passwordController.text);
-    } on AuthException catch (e) {
-      setState(() => _errorMessage = e.message);
-    } catch (_) {
-      setState(() => _errorMessage = 'No se pudo conectar al servidor');
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    final auth = context.read<AuthProvider>();
+    final ok = await auth.login(
+      _emailController.text.trim(),
+      _passwordController.text,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _loading = false;
+      _error = ok ? null : auth.lastError;
+    });
+
+    if (ok) {
+      Navigator.of(context).pushReplacementNamed(AppRoutes.home);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final isLoading = context.watch<AuthProvider>().isLoading;
-
     return Scaffold(
       appBar: AppBar(title: const Text('Ingresar')),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            AppTextField(controller: _emailController, label: 'Email'),
-            const SizedBox(height: 12),
-            AppTextField(controller: _passwordController, label: 'Contraseña', obscureText: true),
-            const SizedBox(height: 20),
-            if (_errorMessage != null) ...[
-              Text(_errorMessage!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-              const SizedBox(height: 12),
-            ],
-            ElevatedButton(
-              onPressed: isLoading ? null : _submit,
-              child: isLoading
-                  ? const SizedBox(
-                      height: 16,
-                      width: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('Ingresar'),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(AppTokens.spaceLG),
+          child: AppCard(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('Speak English', style: AppTokens.textHeadline),
+                const SizedBox(height: AppTokens.spaceLG),
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: AppTokens.spaceMD),
+                    child: StatusView(
+                      loading: false,
+                      isEmpty: false,
+                      error: _error,
+                      builder: (_) => const SizedBox.shrink(),
+                    ),
+                  ),
+                AppTextField(
+                  controller: _emailController,
+                  label: 'Email',
+                  keyboardType: TextInputType.emailAddress,
+                ),
+                const SizedBox(height: AppTokens.spaceSM),
+                AppTextField(
+                  controller: _passwordController,
+                  label: 'Contraseña',
+                  obscureText: true,
+                ),
+                const SizedBox(height: AppTokens.spaceLG),
+                AppButton(
+                  label: 'Ingresar',
+                  loading: _loading,
+                  onPressed: _submit,
+                ),
+                const SizedBox(height: AppTokens.spaceSM),
+                TextButton(
+                  onPressed: _loading
+                      ? null
+                      : () => Navigator.of(context).pushNamed(AppRoutes.register),
+                  child: const Text('¿No tienes cuenta? Regístrate'),
+                ),
+              ],
             ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pushNamed('/register'),
-              child: const Text('¿No tienes cuenta? Regístrate'),
-            ),
-          ],
+          ),
         ),
       ),
     );

@@ -1,24 +1,15 @@
 import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
-import 'package:record/record.dart';
-
+import '../../core/tokens.dart';
 import '../../models/room.dart';
-import '../../services/api_service.dart';
+import '../../services/recorder_service.dart';
 import '../../services/rooms_service.dart';
 import '../../state/auth_provider.dart';
-import '../../widgets/error_banner.dart';
-import '../../widgets/loading_indicator.dart';
+import '../../widgets/app_button.dart';
+import '../../widgets/app_card.dart';
+import '../../widgets/status_view.dart';
 
-/// Detalle de una sala.
-///
-/// Botón "Eliminar" visible solo si `room.hostId == currentUser.id`.
-/// Fase 4: graba audio con `package:record`, lo envía a
-/// `POST /rooms/<id>/process-audio` y hace polling a
-/// `GET /tasks/<task_id>` (cada 2s, máx. 10 intentos) hasta obtener
-/// `SUCCESS`/`FAILURE`.
 class RoomDetailScreen extends StatefulWidget {
   const RoomDetailScreen({super.key, required this.roomId});
 
@@ -29,15 +20,16 @@ class RoomDetailScreen extends StatefulWidget {
 }
 
 class _RoomDetailScreenState extends State<RoomDetailScreen> {
-  final _roomsService = RoomsService(ApiService());
-  final _recorder = AudioRecorder();
+  final _roomsService = RoomsService();
+  final _recorderService = RecorderService();
 
   Room? _room;
-  bool _isLoading = true;
-  String? _errorMessage;
-  bool _isDeleting = false;
+  bool _loading = true;
+  String? _error;
+  bool _deleting = false;
 
   bool _isRecording = false;
+  bool _isUploading = false;
   bool _isProcessing = false;
   String? _audioStatusMessage;
   Map<String, dynamic>? _taskResult;
@@ -45,123 +37,92 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _loadRoom();
+    _load();
   }
 
   @override
   void dispose() {
-    _recorder.dispose();
+    _recorderService.dispose();
     super.dispose();
   }
 
-  Future<void> _loadRoom() async {
+  Future<void> _load() async {
     setState(() {
-      _isLoading = true;
-      _errorMessage = null;
+      _loading = true;
+      _error = null;
     });
     try {
       final room = await _roomsService.getRoom(widget.roomId);
-      if (!mounted) return;
       setState(() => _room = room);
-    } on UnauthorizedException {
-      // El logout y la navegación a /login ya se disparan de forma
-      // centralizada en ApiService.onUnauthorized.
-    } on RoomException catch (e) {
-      if (!mounted) return;
-      setState(() => _errorMessage = e.message);
-    } on NetworkException catch (e) {
-      if (!mounted) return;
-      setState(() => _errorMessage = e.message);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _errorMessage = 'Ocurrió un error inesperado');
+    } catch (e) {
+      setState(() => _error = 'No se pudo cargar la sala: $e');
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      setState(() => _loading = false);
     }
   }
 
-  Future<void> _deleteRoom() async {
-    setState(() => _isDeleting = true);
+  Future<void> _delete() async {
+    setState(() => _deleting = true);
     try {
       await _roomsService.deleteRoom(widget.roomId);
       if (!mounted) return;
       Navigator.of(context).pop();
-    } on UnauthorizedException {
-      // El logout y la navegación a /login ya se disparan de forma
-      // centralizada en ApiService.onUnauthorized.
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _isDeleting = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No se pudo eliminar la sala')),
-      );
+    } catch (e) {
+      setState(() {
+        _error = 'No se pudo eliminar: $e';
+        _deleting = false;
+      });
     }
   }
 
-  Future<void> _toggleRecording() async {
-    if (_isRecording) {
-      final path = await _recorder.stop();
-      if (!mounted) return;
-      setState(() => _isRecording = false);
-      if (path != null) {
-        await _sendAudio(File(path));
-      }
-      return;
-    }
-
-    if (!await _recorder.hasPermission()) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Se necesita permiso de micrófono')),
-      );
-      return;
-    }
-
-    final dir = await getTemporaryDirectory();
-    final path =
-        '${dir.path}/room_${widget.roomId}_${DateTime.now().millisecondsSinceEpoch}.m4a';
-
-    await _recorder.start(const RecordConfig(), path: path);
-    if (!mounted) return;
-    setState(() => _isRecording = true);
-  }
-
-  Future<void> _sendAudio(File audioFile) async {
+  Future<void> _startRecording() async {
     setState(() {
-      _isProcessing = true;
+      _audioStatusMessage = null;
       _taskResult = null;
-      _audioStatusMessage = 'Enviando audio...';
+    });
+    try {
+      await _recorderService.start();
+      setState(() => _isRecording = true);
+    } catch (e) {
+      setState(() => _audioStatusMessage = 'No se pudo iniciar la grabación: $e');
+    }
+  }
+
+  Future<void> _stopAndSend() async {
+    setState(() => _isRecording = false);
+
+    final File? audioFile = await _recorderService.stop();
+    if (audioFile == null) {
+      setState(() => _audioStatusMessage = 'No se grabó ningún audio.');
+      return;
+    }
+
+    setState(() {
+      _isUploading = true;
+      _audioStatusMessage = 'Enviando audio al backend...';
     });
 
     try {
-      final data = await _roomsService.processAudio(widget.roomId, audioFile);
-      final taskId = data['task_id'] as String;
-      if (!mounted) return;
-      setState(() => _audioStatusMessage = 'Procesando...');
-      await _pollTaskStatus(taskId);
-    } on UnauthorizedException {
-      // El logout y la navegación a /login ya se disparan de forma
-      // centralizada en ApiService.onUnauthorized.
-    } on NetworkException catch (e) {
-      if (!mounted) return;
+      final taskId = await _roomsService.processAudio(widget.roomId, audioFile);
       setState(() {
-        _isProcessing = false;
-        _audioStatusMessage = e.message;
+        _isUploading = false;
+        _isProcessing = true;
+        _audioStatusMessage = 'Procesando (task_id: $taskId)...';
       });
-    } catch (_) {
-      if (!mounted) return;
+      await _pollTaskStatus(taskId);
+    } catch (e) {
       setState(() {
+        _isUploading = false;
         _isProcessing = false;
-        _audioStatusMessage = 'No se pudo enviar el audio';
+        _audioStatusMessage = 'Error al enviar el audio: $e';
       });
     }
   }
 
-  /// Polling a `GET /tasks/<task_id>` cada 2 segundos, máximo 10 intentos,
-  /// hasta recibir `state == "SUCCESS"` o `"FAILURE"`.
   Future<void> _pollTaskStatus(String taskId) async {
-    for (var attempt = 0; attempt < 10; attempt++) {
-      await Future<void>.delayed(const Duration(seconds: 2));
+    const maxAttempts = 10;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      await Future.delayed(const Duration(seconds: 2));
       if (!mounted) return;
 
       try {
@@ -172,120 +133,118 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
           setState(() {
             _isProcessing = false;
             _taskResult = status['result'] as Map<String, dynamic>?;
-            _audioStatusMessage = null;
+            _audioStatusMessage = 'Procesamiento completado.';
           });
           return;
         }
-
         if (state == 'FAILURE') {
           setState(() {
             _isProcessing = false;
-            _audioStatusMessage = 'Error al procesar el audio';
+            _audioStatusMessage = 'El procesamiento falló: ${status['error']}';
           });
           return;
         }
-      } on UnauthorizedException {
-        // El logout y la navegación a /login ya se disparan de forma
-        // centralizada en ApiService.onUnauthorized; no tiene sentido
-        // seguir reintentando.
-        setState(() => _isProcessing = false);
+        setState(() => _audioStatusMessage = 'Procesando... ($state)');
+      } catch (e) {
+        setState(() {
+          _isProcessing = false;
+          _audioStatusMessage = 'Error consultando el estado: $e';
+        });
         return;
-      } catch (_) {
-        // Se reintenta en el próximo intento del loop.
       }
     }
-
-    if (!mounted) return;
     setState(() {
       _isProcessing = false;
-      _audioStatusMessage = 'El procesamiento está tardando más de lo esperado';
+      _audioStatusMessage = 'Tiempo de espera agotado consultando el resultado.';
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final currentUser = context.watch<AuthProvider>().currentUser;
-    final room = _room;
-    final isHost = room != null && currentUser != null && room.hostId == currentUser.id;
-
-    return Scaffold(
-      appBar: AppBar(title: Text(room?.name ?? 'Sala')),
-      body: _buildBody(room, isHost),
-    );
-  }
-
-  Widget _buildBody(Room? room, bool isHost) {
-    if (_isLoading) return const LoadingIndicator();
-    if (_errorMessage != null) return ErrorBanner(message: _errorMessage!);
-    if (room == null) return const SizedBox.shrink();
-
-    return Padding(
-      padding: const EdgeInsets.all(24),
+  Widget _buildAudioSection() {
+    return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Estado: ${room.active ? 'Activa' : 'Inactiva'}'),
-          const SizedBox(height: 8),
-          Text('Host: ${room.hostUsername ?? '—'}'),
-          const SizedBox(height: 24),
-          _buildRecordingSection(),
-          const Spacer(),
-          if (isHost)
-            SizedBox(
+          Text('Práctica de audio', style: AppTokens.textTitle),
+          const SizedBox(height: AppTokens.spaceMD),
+          AppButton(
+            label: _isRecording ? 'Detener y enviar' : 'Grabar',
+            icon: _isRecording ? Icons.stop : Icons.mic,
+            loading: _isUploading || _isProcessing,
+            onPressed: _isRecording ? _stopAndSend : _startRecording,
+            variant: _isRecording
+                ? AppButtonVariant.destructive
+                : AppButtonVariant.primary,
+          ),
+          if (_audioStatusMessage != null) ...[
+            const SizedBox(height: AppTokens.spaceMD),
+            Text(_audioStatusMessage!, style: AppTokens.textBody),
+          ],
+          if (_taskResult != null) ...[
+            const SizedBox(height: AppTokens.spaceSM),
+            Container(
               width: double.infinity,
-              child: ElevatedButton(
-                onPressed: _isDeleting ? null : _deleteRoom,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Theme.of(context).colorScheme.error,
-                  foregroundColor: Theme.of(context).colorScheme.onError,
-                ),
-                child: _isDeleting
-                    ? const SizedBox(
-                        height: 16,
-                        width: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Eliminar'),
+              padding: const EdgeInsets.all(AppTokens.spaceSM),
+              decoration: BoxDecoration(
+                color: AppTokens.colorSuccessContainer,
+                borderRadius: BorderRadius.circular(AppTokens.radiusCard),
+              ),
+              child: Text(
+                'Resultado: $_taskResult',
+                style: const TextStyle(color: AppTokens.colorOnSuccessContainer),
               ),
             ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _buildRecordingSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ElevatedButton.icon(
-          onPressed: _isProcessing ? null : _toggleRecording,
-          icon: Icon(_isRecording ? Icons.stop : Icons.mic),
-          label: Text(_isRecording ? 'Detener grabación' : 'Grabar práctica'),
-        ),
-        if (_isProcessing) ...[
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              const SizedBox(
-                height: 16,
-                width: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: 8),
-              Text(_audioStatusMessage ?? 'Procesando...'),
-            ],
+  @override
+  Widget build(BuildContext context) {
+    final currentUser = context.watch<AuthProvider>().currentUser;
+    final isHost = _room != null && _room!.hostId == currentUser?.id;
+
+    return Scaffold(
+      appBar: AppBar(title: Text(_room?.name ?? 'Sala')),
+      body: Padding(
+        padding: const EdgeInsets.all(AppTokens.spaceMD),
+        child: StatusView(
+          loading: _loading,
+          error: _error,
+          onRetry: _load,
+          isEmpty: false,
+          builder: (context) => SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Host: ${_room!.hostUsername ?? '-'}',
+                          style: AppTokens.textBody),
+                      Text('Estado: ${_room!.active ? 'Activa' : 'Inactiva'}',
+                          style: AppTokens.textBody),
+                      if (isHost) ...[
+                        const SizedBox(height: AppTokens.spaceMD),
+                        AppButton(
+                          label: _deleting ? 'Eliminando...' : 'Eliminar sala',
+                          icon: Icons.delete,
+                          loading: _deleting,
+                          variant: AppButtonVariant.destructive,
+                          onPressed: _delete,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: AppTokens.spaceMD),
+                _buildAudioSection(),
+              ],
+            ),
           ),
-        ],
-        if (!_isProcessing && _audioStatusMessage != null) ...[
-          const SizedBox(height: 12),
-          Text(_audioStatusMessage!),
-        ],
-        if (_taskResult != null) ...[
-          const SizedBox(height: 12),
-          Text('Resultado: ${_taskResult!['status']}'),
-          if (_taskResult!['detail'] != null) Text('${_taskResult!['detail']}'),
-        ],
-      ],
+        ),
+      ),
     );
   }
 }

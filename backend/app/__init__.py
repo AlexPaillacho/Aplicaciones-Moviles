@@ -3,6 +3,7 @@ import os
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager
+from flask_cors import CORS
 from dotenv import load_dotenv
 
 # Instancias globales (patrón recomendado para extensiones Flask)
@@ -44,6 +45,19 @@ def create_app() -> Flask:
     # Inicializar extensiones
     db.init_app(app)
     jwt.init_app(app)
+
+    # Autorizar peticiones desde el frontend Flutter en desarrollo local
+    # (el navegador considera cada puerto un origen distinto). Acotado a
+    # localhost/127.0.0.1 en cualquier puerto; quitar o restringir antes
+    # de distribuir la app.
+    CORS(
+        app,
+        resources={r"/*": {"origins": [
+            r"http://localhost:*",
+            r"http://127.0.0.1:*",
+        ]}},
+        supports_credentials=True,
+    )
 
     # Import late-import para evitar ciclos de import
     from app.rooms import rooms_bp

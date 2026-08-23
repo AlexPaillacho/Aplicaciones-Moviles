@@ -1,140 +1,153 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
-import '../../services/api_service.dart';
+import '../../core/tokens.dart';
 import '../../state/auth_provider.dart';
 import '../../state/rooms_provider.dart';
-import '../../widgets/error_banner.dart';
-import '../../widgets/loading_indicator.dart';
+import '../../widgets/app_button.dart';
+import '../../widgets/app_card.dart';
+import '../../widgets/app_text_field.dart';
+import '../../widgets/status_view.dart';
 import 'room_detail_screen.dart';
 
-/// Lista de salas.
-///
-/// `ListView` con nombre/estado, pull-to-refresh, y un
-/// `FloatingActionButton` que abre un diálogo simple para crear sala.
-class RoomsListScreen extends StatefulWidget {
+/// Pantalla real ensamblada exclusivamente con componentes del catálogo:
+/// AppCard (una por sala), StatusView (loading/empty/error del listado)
+/// y AppButton + AppTextField (diálogo de creación). Corresponde al
+/// endpoint GET /rooms/list (y POST /rooms para la creación).
+class RoomsListScreen extends StatelessWidget {
   const RoomsListScreen({super.key});
 
   @override
-  State<RoomsListScreen> createState() => _RoomsListScreenState();
+  Widget build(BuildContext context) {
+    return ChangeNotifierProvider(
+      create: (_) => RoomsProvider()..refresh(),
+      child: const _RoomsListView(),
+    );
+  }
 }
 
-class _RoomsListScreenState extends State<RoomsListScreen> {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<RoomsProvider>().refresh();
-    });
-  }
+class _RoomsListView extends StatefulWidget {
+  const _RoomsListView();
 
-  Future<void> _showCreateDialog() async {
+  @override
+  State<_RoomsListView> createState() => _RoomsListViewState();
+}
+
+class _RoomsListViewState extends State<_RoomsListView> {
+  bool _creating = false;
+
+  Future<void> _showCreateDialog(BuildContext context) async {
     final controller = TextEditingController();
-    final roomsProvider = context.read<RoomsProvider>();
+    final provider = context.read<RoomsProvider>();
 
     final name = await showDialog<String>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Nueva sala'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            decoration: const InputDecoration(labelText: 'Nombre de la sala'),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Nueva sala'),
+        content: AppTextField(controller: controller, label: 'Nombre de la sala'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancelar'),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancelar'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(dialogContext).pop(controller.text.trim()),
-              child: const Text('Crear'),
-            ),
-          ],
-        );
-      },
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('Crear'),
+          ),
+        ],
+      ),
     );
 
-    if (name == null || name.isEmpty || !mounted) return;
-
-    try {
-      await roomsProvider.create(name);
-    } on UnauthorizedException {
-      // El logout y la navegación a /login ya se disparan de forma
-      // centralizada en ApiService.onUnauthorized.
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No se pudo crear la sala')),
-      );
+    if (name != null && name.isNotEmpty) {
+      setState(() => _creating = true);
+      await provider.create(name);
+      if (mounted) setState(() => _creating = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final roomsProvider = context.watch<RoomsProvider>();
+    final rooms = context.watch<RoomsProvider>();
+    final auth = context.watch<AuthProvider>();
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Salas'),
         actions: [
-          IconButton(
-            onPressed: () => context.read<AuthProvider>().logout(),
-            icon: const Icon(Icons.logout),
-            tooltip: 'Cerrar sesión',
+          Semantics(
+            button: true,
+            label: 'Cerrar sesión',
+            child: IconButton(
+              icon: const Icon(Icons.logout),
+              onPressed: () => context.read<AuthProvider>().logout(),
+            ),
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: roomsProvider.refresh,
-        child: _buildBody(roomsProvider),
+      body: Padding(
+        padding: const EdgeInsets.all(AppTokens.spaceMD),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AppButton(
+              label: 'Nueva sala',
+              icon: Icons.add,
+              loading: _creating,
+              onPressed: () => _showCreateDialog(context),
+            ),
+            const SizedBox(height: AppTokens.spaceMD),
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: rooms.refresh,
+                child: StatusView(
+                  loading: rooms.loading && rooms.rooms.isEmpty,
+                  error: rooms.error,
+                  onRetry: rooms.refresh,
+                  isEmpty: rooms.rooms.isEmpty,
+                  emptyMessage: 'Todavía no hay salas. Crea la primera.',
+                  builder: (context) => ListView.separated(
+                    itemCount: rooms.rooms.length,
+                    separatorBuilder: (_, __) =>
+                        const SizedBox(height: AppTokens.spaceSM),
+                    itemBuilder: (context, index) {
+                      final room = rooms.rooms[index];
+                      final isHost = room.hostId == auth.currentUser?.id;
+                      return AppCard(
+                        semanticLabel: 'Abrir sala ${room.name}',
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => RoomDetailScreen(roomId: room.id),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(room.name, style: AppTokens.textBodyLarge),
+                                  const SizedBox(height: AppTokens.spaceXS),
+                                  Text(
+                                    'Host: ${room.hostUsername ?? '-'} · '
+                                    '${room.active ? 'Activa' : 'Inactiva'}',
+                                    style: AppTokens.textCaption,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (isHost)
+                              const Icon(Icons.star,
+                                  size: 18, color: AppTokens.colorPrimary),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _showCreateDialog,
-        tooltip: 'Crear sala',
-        child: const Icon(Icons.add),
-      ),
-    );
-  }
-
-  Widget _buildBody(RoomsProvider roomsProvider) {
-    if (roomsProvider.isLoading && roomsProvider.rooms.isEmpty) {
-      return const LoadingIndicator();
-    }
-
-    if (roomsProvider.errorMessage != null && roomsProvider.rooms.isEmpty) {
-      return ListView(
-        children: [ErrorBanner(message: roomsProvider.errorMessage!)],
-      );
-    }
-
-    if (roomsProvider.rooms.isEmpty) {
-      return ListView(
-        children: const [
-          Padding(
-            padding: EdgeInsets.all(24),
-            child: Center(child: Text('No hay salas todavía')),
-          ),
-        ],
-      );
-    }
-
-    return ListView.builder(
-      itemCount: roomsProvider.rooms.length,
-      itemBuilder: (context, index) {
-        final room = roomsProvider.rooms[index];
-        return ListTile(
-          title: Text(room.name),
-          subtitle: Text(room.active ? 'Activa' : 'Inactiva'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => RoomDetailScreen(roomId: room.id)),
-            );
-          },
-        );
-      },
     );
   }
 }
