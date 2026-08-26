@@ -35,3 +35,32 @@ class Room(db.Model):
     def __repr__(self) -> str:
         return f'<Room id={self.id} name={self.name} active={self.active}>'
 
+
+class AudioSubmission(db.Model):
+    """Persiste cada envío de audio a /rooms/<id>/process-audio y el resultado
+    final de la tarea Celery, en vez de dejarlo vivir solo en Redis/Celery
+    (que es efímero). Da un 4to recurso CRUD real y una tercera entidad
+    para demostrar 3FN con relaciones íntegras (room_id, user_id -> FKs)."""
+    __tablename__ = 'audio_submissions'
+
+    id = Column(Integer, primary_key=True)
+
+    room_id = Column(Integer, ForeignKey('rooms.id'), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False, index=True)
+
+    task_id = Column(String(64), nullable=False, index=True)
+    saved_filename = Column(String(255), nullable=True)
+
+    # PENDING | STARTED | SUCCESS | FAILURE (espeja los estados de Celery)
+    status = Column(String(20), nullable=False, default='PENDING', index=True)
+    result_json = Column(String(2000), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    room = relationship('Room', lazy='select')
+    user = relationship('User', lazy='select')
+
+    def __repr__(self) -> str:
+        return f'<AudioSubmission id={self.id} room_id={self.room_id} status={self.status}>'
+
