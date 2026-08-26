@@ -9,7 +9,7 @@ from werkzeug.utils import secure_filename
 
 from app import db
 from app.cache import redis_client
-from app.models import Room
+from app.models import AudioSubmission, Room
 from app.tasks import celery_app, process_audio_session
 
 from app.auth.routes import jwt_user_required
@@ -142,20 +142,58 @@ def process_audio(room_id: str):
         audio_file.save(os.path.join(UPLOAD_DIR, saved_filename))
 
     task = process_audio_session.delay(str(room_id))
+
+    # Persistimos el envío en la DB (antes esto solo vivía en Celery/Redis,
+    # que es efímero). user_id sale del JWT: quien envía el audio, no
+    # necesariamente el host de la sala.
+    submission = AudioSubmission(
+        room_id=int(room_id),
+        user_id=int(get_jwt_identity()),
+        task_id=task.id,
+        saved_filename=saved_filename,
+        status='PENDING',
+    )
+    db.session.add(submission)
+    db.session.commit()
+
     return (
         jsonify({
             'message': 'Audio processing started',
             'task_id': task.id,
             'saved_file': saved_filename,
+            'submission_id': submission.id,
         }),
         202,
     )
+
+
+def _sync_submission_from_celery(task_id: str, celery_result) -> None:
+    """Sincroniza el estado/resultado de Celery hacia la fila persistida en
+    AudioSubmission. Se llama de forma "perezosa" cuando se consulta
+    GET /tasks/<id> (que la app ya pollea), evitando que el worker de
+    Celery necesite contexto de Flask/DB para escribir directamente."""
+    submission = AudioSubmission.query.filter_by(task_id=task_id).first()
+    if submission is None:
+        return
+
+    if submission.status == celery_result.state:
+        return  # nada que actualizar
+
+    submission.status = celery_result.state
+    if celery_result.state == 'SUCCESS':
+        submission.result_json = json.dumps(celery_result.result)
+    elif celery_result.state == 'FAILURE':
+        submission.result_json = json.dumps({'error': str(celery_result.info)})
+
+    db.session.commit()
 
 
 @rooms_bp.route('/tasks/<task_id>', methods=['GET'])
 @jwt_user_required()
 def task_status(task_id: str):
     result = celery_app.AsyncResult(task_id)
+
+    _sync_submission_from_celery(task_id, result)
 
     response = {'task_id': task_id, 'state': result.state}
 
@@ -165,6 +203,35 @@ def task_status(task_id: str):
         response['error'] = str(result.info)
 
     return jsonify(response), 200
+
+
+def _submission_to_dict(submission: AudioSubmission) -> dict:
+    return {
+        'id': submission.id,
+        'room_id': submission.room_id,
+        'user_id': submission.user_id,
+        'task_id': submission.task_id,
+        'status': submission.status,
+        'result': json.loads(submission.result_json) if submission.result_json else None,
+        'created_at': submission.created_at.isoformat(),
+    }
+
+
+@rooms_bp.route('/rooms/<room_id>/submissions', methods=['GET'])
+@jwt_user_required()
+def list_submissions(room_id: str):
+    """Historial real (persistido en DB) de envíos de audio de una sala,
+    a diferencia de GET /tasks/<id> que solo consulta un envío puntual
+    contra Celery/Redis (efímero)."""
+    submissions = (
+        AudioSubmission.query.filter_by(room_id=room_id)
+        .order_by(AudioSubmission.created_at.desc())
+        .all()
+    )
+    return jsonify({
+        'room_id': int(room_id),
+        'submissions': [_submission_to_dict(s) for s in submissions],
+    }), 200
 
 
 @rooms_bp.route('/rooms/<room_id>', methods=['PUT'])
@@ -216,4 +283,3 @@ def delete_room(room_id: str):
     print(f"--> [CACHE INVALIDATED] Clave eliminada de Redis tras eliminación")
 
     return jsonify({'deleted': True, 'room': deleted_room}), 200
-
