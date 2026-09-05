@@ -31,6 +31,13 @@ class Room(db.Model):
     host = relationship('User', lazy='select')
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    # Se usa como base de comparación para la resolución de conflictos del
+    # taller de Semana 12: el cliente guarda el `updated_at` que tenía la
+    # sala al momento de encolar una edición offline (`PUT /rooms/<id>`).
+    # Si al sincronizar el valor en el servidor ya avanzó, gana el servidor.
+    updated_at = Column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
 
     def __repr__(self) -> str:
         return f'<Room id={self.id} name={self.name} active={self.active}>'

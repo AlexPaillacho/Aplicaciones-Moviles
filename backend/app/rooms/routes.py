@@ -1,6 +1,7 @@
 import json
 import os
 import time
+from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import get_jwt_identity
@@ -40,6 +41,13 @@ def _room_to_dict(room: Room) -> dict:
         'id': room.id,
         'name': room.name,
         'active': room.active,
+        # ISO 8601 en UTC. IMPORTANTE: se agrega el sufijo 'Z' a mano
+        # porque `datetime.utcnow()` guarda un datetime "naive" (sin
+        # tzinfo); sin el 'Z', `DateTime.parse` en Dart lo interpretaría
+        # como hora LOCAL del dispositivo en vez de UTC, y la comparación
+        # de conflictos (`expected_updated_at` en `put_room`) quedaría
+        # desfasada por el huso horario del cliente.
+        'updated_at': room.updated_at.isoformat() + 'Z',
         'host': {
             'id': host.id if host else None,
             'username': host.username if host else None,
@@ -234,6 +242,23 @@ def list_submissions(room_id: str):
     }), 200
 
 
+def _parse_iso(value):
+    """Parsea un timestamp ISO 8601 a un datetime NAIVE en UTC (sin
+    tzinfo), para que se pueda comparar directamente con `Room.updated_at`
+    (que SQLAlchemy/SQLite guardan naive). Devuelve None si viene vacío o
+    malformado (se trata como 'sin base de comparación', no como error).
+    """
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
 @rooms_bp.route('/rooms/<room_id>', methods=['PUT'])
 @jwt_user_required()
 def put_room(room_id: str):
@@ -243,6 +268,26 @@ def put_room(room_id: str):
     room = Room.query.filter_by(id=room_id).first()
     if not room:
         return jsonify({'error': 'Room not found'}), 404
+
+    # ===== Resolución de conflictos (taller Semana 12) =====
+    # El cliente manda `expected_updated_at`: el `updated_at` que tenía la
+    # sala en su caché local al momento en que el usuario encoló esta
+    # edición (offline). Si el servidor tiene un `updated_at` MÁS NUEVO que
+    # ese valor, significa que la sala cambió mientras el cliente estaba
+    # desconectado -> hay conflicto real, y gana el servidor: se rechaza la
+    # escritura local con 409 y se devuelve el estado actual para que el
+    # cliente descarte su edición y se realinee.
+    expected_updated_at = _parse_iso(payload.get('expected_updated_at'))
+    # Comparamos truncado a microsegundos ausentes de milisegundos de red
+    # (SQLite guarda microsegundos; alcanza con comparar directamente).
+    if expected_updated_at is not None and room.updated_at > expected_updated_at:
+        return jsonify({
+            'error': 'conflict',
+            'message': 'La sala fue modificada en el servidor mientras estabas sin conexión.',
+            'room': _room_to_dict(
+                Room.query.options(joinedload(Room.host)).filter_by(id=room_id).first()
+            ),
+        }), 409
 
     # Actualización simple (ajusta según campos esperados por tu frontend)
     if 'name' in payload:
