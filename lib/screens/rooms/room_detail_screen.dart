@@ -7,10 +7,19 @@ import '../../services/api_service.dart';
 import '../../services/recorder_service.dart';
 import '../../services/rooms_service.dart';
 import '../../state/auth_provider.dart';
+import '../../state/rooms_provider.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
+import '../../widgets/app_text_field.dart';
 import '../../widgets/status_view.dart';
 
+/// Taller Semana 12: el detalle ahora lee la sala desde el
+/// `RoomsProvider` (caché local + cola offline), no directamente del
+/// backend — así la edición de nombre/estado funciona sin conexión
+/// (queda encolada y se sincroniza sola) y muestra el ícono de
+/// "pendiente de sincronizar" mientras tanto. `delete` sigue yendo
+/// directo al backend: el taller solo pide offline para lectura,
+/// creación y edición.
 class RoomDetailScreen extends StatefulWidget {
   const RoomDetailScreen({super.key, required this.roomId});
 
@@ -24,10 +33,8 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
   final _roomsService = RoomsService(ApiService());
   final _recorderService = RecorderService();
 
-  Room? _room;
-  bool _loading = true;
-  String? _error;
   bool _deleting = false;
+  String? _error;
 
   bool _isRecording = false;
   bool _isUploading = false;
@@ -36,30 +43,17 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
   Map<String, dynamic>? _taskResult;
 
   @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  @override
   void dispose() {
     _recorderService.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final room = await _roomsService.getRoom(widget.roomId);
-      setState(() => _room = room);
-    } catch (e) {
-      setState(() => _error = 'No se pudo cargar la sala: $e');
-    } finally {
-      setState(() => _loading = false);
+  Room? _findRoom(BuildContext context) {
+    final rooms = context.watch<RoomsProvider>().rooms;
+    for (final r in rooms) {
+      if (r.id == widget.roomId) return r;
     }
+    return null;
   }
 
   Future<void> _delete() async {
@@ -73,6 +67,56 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
         _error = 'No se pudo eliminar: $e';
         _deleting = false;
       });
+    }
+  }
+
+  Future<void> _showEditDialog(Room room) async {
+    final controller = TextEditingController(text: room.name);
+    var active = room.active;
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Editar sala'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AppTextField(controller: controller, label: 'Nombre de la sala'),
+              const SizedBox(height: AppTokens.spaceMD),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Activa'),
+                value: active,
+                onChanged: (v) => setDialogState(() => active = v),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancelar'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Guardar'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == true && mounted) {
+      final name = controller.text.trim();
+      // Si estamos sin conexión, esto queda encolado y se aplica de
+      // inmediato en la caché (optimista); se sincroniza solo al
+      // reconectar.
+      await context.read<RoomsProvider>().update(
+            room,
+            name: name.isEmpty ? null : name,
+            active: active,
+          );
     }
   }
 
@@ -204,17 +248,21 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final currentUser = context.watch<AuthProvider>().currentUser;
-    final isHost = _room != null && _room!.hostId == currentUser?.id;
+    final room = _findRoom(context);
+    final isHost = room != null && room.hostId == currentUser?.id;
+    final roomsLoading = context.watch<RoomsProvider>().isLoading;
 
     return Scaffold(
-      appBar: AppBar(title: Text(_room?.name ?? 'Sala')),
+      appBar: AppBar(title: Text(room?.name ?? 'Sala')),
       body: Padding(
         padding: const EdgeInsets.all(AppTokens.spaceMD),
         child: StatusView(
-          loading: _loading,
+          loading: roomsLoading && room == null,
           error: _error,
-          onRetry: _load,
-          isEmpty: false,
+          onRetry: () => context.read<RoomsProvider>().refresh(),
+          isEmpty: room == null,
+          emptyMessage:
+              'Esta sala todavía no está en la caché local. Conéctate y reintenta.',
           builder: (context) => SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -223,12 +271,34 @@ class _RoomDetailScreenState extends State<RoomDetailScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('Host: ${_room!.hostUsername ?? '-'}',
-                          style: AppTokens.textBody),
-                      Text('Estado: ${_room!.active ? 'Activa' : 'Inactiva'}',
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text('Host: ${room!.hostUsername ?? '-'}',
+                                style: AppTokens.textBody),
+                          ),
+                          if (room.pendingSync)
+                            Row(
+                              children: [
+                                const Icon(Icons.sync,
+                                    size: 16, color: AppTokens.colorPrimary),
+                                const SizedBox(width: AppTokens.spaceXS),
+                                Text('Pendiente de sincronizar',
+                                    style: AppTokens.textCaption),
+                              ],
+                            ),
+                        ],
+                      ),
+                      Text('Estado: ${room.active ? 'Activa' : 'Inactiva'}',
                           style: AppTokens.textBody),
                       if (isHost) ...[
                         const SizedBox(height: AppTokens.spaceMD),
+                        AppButton(
+                          label: 'Editar sala',
+                          icon: Icons.edit,
+                          onPressed: () => _showEditDialog(room),
+                        ),
+                        const SizedBox(height: AppTokens.spaceSM),
                         AppButton(
                           label: _deleting ? 'Eliminando...' : 'Eliminar sala',
                           icon: Icons.delete,

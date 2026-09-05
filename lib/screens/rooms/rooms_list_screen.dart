@@ -13,31 +13,33 @@ import 'room_detail_screen.dart';
 /// AppCard (una por sala), StatusView (loading/empty/error del listado)
 /// y AppButton + AppTextField (diálogo de creación). Corresponde al
 /// endpoint GET /rooms/list (y POST /rooms para la creación).
-class RoomsListScreen extends StatelessWidget {
+///
+/// Taller Semana 12: usa el `RoomsProvider` GLOBAL (provisto en
+/// `app.dart`), no uno propio — es el mismo que `app.dart` usa para
+/// disparar la sincronización al reconectar y para limpiar la caché al
+/// hacer logout, así que tiene que ser una única instancia compartida.
+class RoomsListScreen extends StatefulWidget {
   const RoomsListScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => RoomsProvider()..refresh(),
-      child: const _RoomsListView(),
-    );
-  }
+  State<RoomsListScreen> createState() => _RoomsListScreenState();
 }
 
-class _RoomsListView extends StatefulWidget {
-  const _RoomsListView();
-
+class _RoomsListScreenState extends State<RoomsListScreen> {
   @override
-  State<_RoomsListView> createState() => _RoomsListViewState();
-}
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<RoomsProvider>().refresh();
+    });
+  }
 
-class _RoomsListViewState extends State<_RoomsListView> {
   bool _creating = false;
 
   Future<void> _showCreateDialog(BuildContext context) async {
     final controller = TextEditingController();
     final provider = context.read<RoomsProvider>();
+    final currentUser = context.read<AuthProvider>().currentUser;
 
     final name = await showDialog<String>(
       context: context,
@@ -59,9 +61,22 @@ class _RoomsListViewState extends State<_RoomsListView> {
 
     if (name != null && name.isNotEmpty) {
       setState(() => _creating = true);
-      await provider.create(name);
+      await provider.create(
+        name,
+        hostId: currentUser?.id,
+        hostUsername: currentUser?.username,
+      );
       if (mounted) setState(() => _creating = false);
     }
+  }
+
+  String _formatLastSynced(DateTime? lastSyncedAt) {
+    if (lastSyncedAt == null) return 'Sin datos sincronizados todavía';
+    final diff = DateTime.now().difference(lastSyncedAt);
+    if (diff.inMinutes < 1) return 'Actualizado hace instantes';
+    if (diff.inMinutes < 60) return 'Actualizado hace ${diff.inMinutes} min';
+    if (diff.inHours < 24) return 'Actualizado hace ${diff.inHours} h';
+    return 'Actualizado hace ${diff.inDays} d';
   }
 
   @override
@@ -88,6 +103,39 @@ class _RoomsListViewState extends State<_RoomsListView> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (rooms.isOffline || rooms.pendingCount > 0)
+              Padding(
+                padding: const EdgeInsets.only(bottom: AppTokens.spaceSM),
+                child: Semantics(
+                  liveRegion: true,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(AppTokens.spaceSM),
+                    decoration: BoxDecoration(
+                      color: AppTokens.colorPrimary.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(AppTokens.radiusCard),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          rooms.isOffline ? Icons.cloud_off : Icons.sync,
+                          size: 18,
+                          color: AppTokens.colorPrimary,
+                        ),
+                        const SizedBox(width: AppTokens.spaceSM),
+                        Expanded(
+                          child: Text(
+                            rooms.isOffline
+                                ? '${_formatLastSynced(rooms.lastSyncedAt)} · Sin conexión'
+                                : '${rooms.pendingCount} cambio(s) por sincronizar',
+                            style: AppTokens.textCaption,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             AppButton(
               label: 'Nueva sala',
               icon: Icons.add,
@@ -134,6 +182,12 @@ class _RoomsListViewState extends State<_RoomsListView> {
                                 ],
                               ),
                             ),
+                            if (room.pendingSync)
+                              const Padding(
+                                padding: EdgeInsets.only(right: AppTokens.spaceXS),
+                                child: Icon(Icons.sync,
+                                    size: 18, color: AppTokens.colorPrimary),
+                              ),
                             if (isHost)
                               const Icon(Icons.star,
                                   size: 18, color: AppTokens.colorPrimary),
