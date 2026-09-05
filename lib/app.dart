@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -6,6 +8,8 @@ import 'screens/auth/login_screen.dart';
 import 'screens/auth/register_screen.dart';
 import 'screens/rooms/rooms_list_screen.dart';
 import 'services/api_service.dart';
+import 'services/auth_service.dart';
+import 'services/connectivity_service.dart';
 import 'state/auth_provider.dart';
 import 'state/rooms_provider.dart';
 
@@ -34,6 +38,8 @@ class App extends StatefulWidget {
 class _AppState extends State<App> {
   final _authProvider = AuthProvider();
   final _roomsProvider = RoomsProvider();
+  final _connectivityService = ConnectivityService();
+  StreamSubscription<bool>? _connectivitySub;
 
   @override
   void initState() {
@@ -42,6 +48,23 @@ class _AppState extends State<App> {
       _authProvider.logout();
       navigatorKey.currentState?.pushNamedAndRemoveUntil('/login', (route) => false);
     };
+
+    // Taller Semana 12: borra la caché local de rooms y la cola offline
+    // al cerrar sesión (sin importar desde qué pantalla se disparó el
+    // logout: botón manual o el 401 centralizado de arriba).
+    AuthService.onLogout = _roomsProvider.clearLocalData;
+
+    // Al recuperar conexión, procesa la cola de operaciones pendientes
+    // sin que el usuario tenga que hacer pull-to-refresh manualmente.
+    _connectivitySub = _connectivityService.onConnectivityRestored.listen((_) {
+      _roomsProvider.trySyncPending();
+    });
+  }
+
+  @override
+  void dispose() {
+    _connectivitySub?.cancel();
+    super.dispose();
   }
 
   @override

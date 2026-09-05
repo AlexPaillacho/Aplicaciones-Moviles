@@ -14,6 +14,18 @@ class RoomException implements Exception {
   String toString() => message;
 }
 
+/// Se lanza cuando `PUT /rooms/<id>` responde 409: la sala cambió en el
+/// servidor mientras la edición estaba encolada offline. Trae la versión
+/// vigente del servidor para que quien la capture (normalmente
+/// `SyncService`) descarte la edición local y realinee la caché.
+class RoomConflictException implements Exception {
+  const RoomConflictException(this.serverRoom);
+  final Room serverRoom;
+
+  @override
+  String toString() => 'Conflicto: la sala cambió en el servidor';
+}
+
 /// Servicio de salas (rooms) contra el backend Flask.
 ///
 /// Se completa aquí en la Fase 3 (listar/crear/editar/eliminar salas).
@@ -64,16 +76,39 @@ class RoomsService {
   }
 
   /// `PUT /rooms/<id>` (JWT).
-  Future<void> updateRoom(int id, {String? name, bool? active}) async {
+  ///
+  /// `expectedUpdatedAt` es el `updated_at` que el cliente tenía en su
+  /// caché al momento de encolar esta edición (offline-first: se guarda
+  /// junto a la operación pendiente y se reenvía recién al sincronizar).
+  /// Si el servidor responde 409 (la sala cambió mientras tanto), se
+  /// lanza [RoomConflictException] con la versión vigente del servidor
+  /// en vez de [RoomException], para que el llamador pueda distinguir
+  /// "falló" de "hay que resolver un conflicto".
+  Future<Room> updateRoom(
+    int id, {
+    String? name,
+    bool? active,
+    String? expectedUpdatedAt,
+  }) async {
     final body = <String, dynamic>{
       'name': ?name,
       'active': ?active,
+      'expected_updated_at': ?expectedUpdatedAt,
     };
     final response = await _apiService.authorizedPut('/rooms/$id', body: body);
+
+    if (response.statusCode == 409) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final serverRoom = Room.fromJson(data['room'] as Map<String, dynamic>);
+      throw RoomConflictException(serverRoom);
+    }
 
     if (response.statusCode != 200) {
       throw RoomException(_extractError(response.body));
     }
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    return Room.fromJson(data['room'] as Map<String, dynamic>);
   }
 
   /// `DELETE /rooms/<id>` (JWT).

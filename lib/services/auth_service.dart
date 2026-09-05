@@ -70,8 +70,16 @@ class AuthService {
     return User.fromJson(data['user'] as Map<String, dynamic>);
   }
 
-  Future<void> logout() {
-    return _tokenStorage.deleteToken();
+  /// Callback global opcional, configurado una sola vez en `app.dart`,
+  /// para limpiar cualquier almacén local que no sea el token (ej. la
+  /// caché de rooms y la cola offline en `LocalDbService`). El taller
+  /// de Semana 12 exige borrar la totalidad del almacén local al cerrar
+  /// sesión, no solo el token.
+  static Future<void> Function()? onLogout;
+
+  Future<void> logout() async {
+    await _tokenStorage.deleteToken();
+    await onLogout?.call();
   }
 
   String _extractError(String responseBody) {
