@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/tokens.dart';
+import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import '../../state/auth_provider.dart';
 import '../../widgets/app_button.dart';
@@ -51,11 +52,27 @@ class _LoginScreenState extends State<LoginScreen> {
         _loading = false;
         _error = e.message;
       });
+    } on ValidationException catch (e) {
+      // Bloque 7, familia 4 (422): datos inválidos, distinto de
+      // credenciales incorrectas (`AuthException`, 401).
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.message;
+      });
+    } on NetworkException catch (e) {
+      // Bloque 7, familias 1-3: cada subtipo (sin conexión / timeout /
+      // servidor caído) ya trae su propio mensaje de dominio.
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.message;
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'No se pudo conectar al servidor';
+        _error = 'Ocurrió un error inesperado';
       });
     }
   }

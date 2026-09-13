@@ -1,20 +1,46 @@
+import 'package:json_annotation/json_annotation.dart';
+
+part 'room.g.dart';
+
+/// Host anidado tal como lo entrega el backend: `host: {id, username}`.
+///
+/// Taller Semana 13 (Bloque 5): entidad propia con serialización
+/// generada, para poder documentar la divergencia servidor↔cliente
+/// (ver comentario en `Room`) sin ensuciar el `fromJson` a mano.
+@JsonSerializable()
+class RoomHost {
+  const RoomHost({required this.id, required this.username});
+
+  final int id;
+  final String username;
+
+  factory RoomHost.fromJson(Map<String, dynamic> json) => _$RoomHostFromJson(json);
+  Map<String, dynamic> toJson() => _$RoomHostToJson(this);
+}
+
 /// Modelo de sala (room).
 ///
 /// Coincide con lo que devuelve el backend en `GET /rooms/list`,
-/// `GET /rooms/<id>` y `POST /rooms`, donde el host llega anidado
-/// como `host: {id, username}`.
+/// `GET /rooms/<id>` y `POST /rooms`.
 ///
-/// Taller Semana 12: agrega `updatedAt` (necesario para la estrategia de
-/// conflictos) y helpers de (de)serialización hacia la caché SQLite
-/// local (`toCacheMap`/`fromCacheMap`), separados de `fromJson` (que
-/// habla el formato del backend) para no mezclar los dos contratos.
+/// Taller Semana 13 (Bloque 5): serialización generada con
+/// `json_serializable` (`_$RoomFromJson`/`_$RoomToJson` en
+/// `room.g.dart`, generado con `dart run build_runner build`).
+///
+/// **Divergencia de nomenclatura servidor↔cliente documentada:** el
+/// backend entrega el host como objeto anidado (`host: {id, username}`),
+/// pero el resto de la app (pantallas, caché SQLite de Semana 12) ya
+/// usaba los campos planos `hostId`/`hostUsername`. En vez de tocar
+/// todos esos call sites, `host` se deserializa tal cual (anidado) y
+/// `hostId`/`hostUsername` quedan como *getters* derivados — no son
+/// campos del JSON ni de la serialización generada.
+@JsonSerializable(explicitToJson: true)
 class Room {
   const Room({
     required this.id,
     required this.name,
     required this.active,
-    required this.hostId,
-    required this.hostUsername,
+    this.host,
     required this.updatedAt,
     this.pendingSync = false,
   });
@@ -22,15 +48,27 @@ class Room {
   final int id;
   final String name;
   final bool active;
-  final int? hostId;
-  final String? hostUsername;
+
+  /// Host anidado tal como lo manda el backend. `null` es válido y
+  /// esperado (campo opcional anulable, ver Bloque 5): una sala puede
+  /// no tener host resuelto en la respuesta.
+  final RoomHost? host;
+
+  @JsonKey(name: 'updated_at')
   final DateTime updatedAt;
 
   /// true si esta sala tiene una operación local todavía no confirmada
   /// por el servidor (creación o edición en la cola). Es un dato de solo
   /// UI, calculado por el provider — no viene del backend ni se guarda
-  /// en la caché.
+  /// en la caché, así que se excluye de la (de)serialización generada.
+  @JsonKey(includeFromJson: false, includeToJson: false)
   final bool pendingSync;
+
+  /// Getters derivados de `host` (ver nota de divergencia arriba). El
+  /// resto de la app sigue leyendo `room.hostId` / `room.hostUsername`
+  /// sin enterarse de que el backend los anida.
+  int? get hostId => host?.id;
+  String? get hostUsername => host?.username;
 
   Room copyWith({
     String? name,
@@ -42,31 +80,18 @@ class Room {
       id: id,
       name: name ?? this.name,
       active: active ?? this.active,
-      hostId: hostId,
-      hostUsername: hostUsername,
+      host: host,
       updatedAt: updatedAt ?? this.updatedAt,
       pendingSync: pendingSync ?? this.pendingSync,
     );
   }
 
-  factory Room.fromJson(Map<String, dynamic> json) {
-    final host = json['host'] as Map<String, dynamic>?;
-    return Room(
-      id: json['id'] as int,
-      name: json['name'] as String,
-      active: json['active'] as bool,
-      hostId: host?['id'] as int?,
-      hostUsername: host?['username'] as String?,
-      // El backend siempre manda `updated_at`; si algún día faltara
-      // (respuesta vieja en caché), caemos a "ahora" para no romper el
-      // parseo.
-      updatedAt: json['updated_at'] != null
-          ? DateTime.parse(json['updated_at'] as String)
-          : DateTime.now(),
-    );
-  }
+  factory Room.fromJson(Map<String, dynamic> json) => _$RoomFromJson(json);
+  Map<String, dynamic> toJson() => _$RoomToJson(this);
 
-  /// Fila para la tabla `rooms_cache` de SQLite (ver `local_db_service.dart`).
+  /// Fila para la tabla `rooms_cache` de SQLite (ver `rooms_local_source.dart`).
+  /// No es el contrato del backend, así que se mantiene manual en vez de
+  /// generado: aplana `host` en dos columnas (`host_id`, `host_username`).
   Map<String, Object?> toCacheMap() {
     return {
       'id': id,
@@ -79,12 +104,15 @@ class Room {
   }
 
   factory Room.fromCacheMap(Map<String, Object?> map) {
+    final cachedHostId = map['host_id'] as int?;
+    final cachedHostUsername = map['host_username'] as String?;
     return Room(
       id: map['id'] as int,
       name: map['name'] as String,
       active: (map['active'] as int) == 1,
-      hostId: map['host_id'] as int?,
-      hostUsername: map['host_username'] as String?,
+      host: (cachedHostId != null && cachedHostUsername != null)
+          ? RoomHost(id: cachedHostId, username: cachedHostUsername)
+          : null,
       updatedAt: DateTime.parse(map['updated_at'] as String),
     );
   }
