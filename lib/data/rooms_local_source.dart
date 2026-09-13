@@ -3,7 +3,16 @@ import 'package:sqflite/sqflite.dart';
 
 import '../models/room.dart';
 
-/// Persistencia local del taller de Semana 12.
+/// Fuente de datos local de salas (rooms): caché SQLite + cola de
+/// operaciones offline (taller Semana 12).
+///
+/// Taller Semana 13 (Bloque 6): capa "local" de la nueva arquitectura de
+/// datos (remoto / local / repositorio). Antes de este bloque se llamaba
+/// `LocalDbService`; el nombre cambió para que las tres capas compartan
+/// el mismo prefijo (`Rooms...Source`/`RoomsRepository`) y quede claro
+/// que es la contraparte local de `RoomsRemoteSource`. Solo sabe leer y
+/// escribir SQLite — no llama al backend ni decide cuándo sincronizar
+/// (eso vive en `RoomsRepository`).
 ///
 /// Tres tablas, todas SOLO con datos no sensibles (nombre de sala,
 /// estado activo/inactivo, timestamps): el token JWT NUNCA pasa por
@@ -20,9 +29,9 @@ import '../models/room.dart';
 /// - `sync_meta`: pares clave/valor; hoy solo se usa para
 ///   `last_synced_at` (cuándo fue el último `GET /rooms/list` exitoso),
 ///   que alimenta el indicador de "actualizado hace X" en la UI.
-class LocalDbService {
-  LocalDbService._internal();
-  static final LocalDbService instance = LocalDbService._internal();
+class RoomsLocalSource {
+  RoomsLocalSource._internal();
+  static final RoomsLocalSource instance = RoomsLocalSource._internal();
 
   Database? _db;
 

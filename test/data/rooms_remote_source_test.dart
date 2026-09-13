@@ -1,4 +1,5 @@
-// Fase 6: tests unitarios de rooms_service.dart contra un backend
+// Fase 6 (Taller Semana 13, Bloque 6): tests unitarios de
+// RoomsRemoteSource (antes rooms_service.dart) contra un backend
 // simulado con package:http/testing.dart (MockClient), sin backend real.
 
 import 'dart:convert';
@@ -9,7 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 import 'package:speak_english/services/api_service.dart';
-import 'package:speak_english/services/rooms_service.dart';
+import 'package:speak_english/data/rooms_remote_source.dart';
 import 'package:speak_english/services/token_storage.dart';
 
 /// TokenStorage en memoria para tests: evita tocar
@@ -19,6 +20,7 @@ class FakeTokenStorage extends TokenStorage {
   FakeTokenStorage([this._token]);
 
   String? _token;
+  String? _refreshToken;
 
   @override
   Future<void> saveToken(String token) async => _token = token;
@@ -27,7 +29,16 @@ class FakeTokenStorage extends TokenStorage {
   Future<String?> readToken() async => _token;
 
   @override
-  Future<void> deleteToken() async => _token = null;
+  Future<void> saveRefreshToken(String token) async => _refreshToken = token;
+
+  @override
+  Future<String?> readRefreshToken() async => _refreshToken;
+
+  @override
+  Future<void> deleteToken() async {
+    _token = null;
+    _refreshToken = null;
+  }
 }
 
 Map<String, dynamic> _roomJson({
@@ -36,20 +47,24 @@ Map<String, dynamic> _roomJson({
   bool active = true,
   int hostId = 7,
   String hostUsername = 'juan',
+  String updatedAt = '2026-01-01T00:00:00.000Z',
 }) {
   return {
     'id': id,
     'name': name,
     'active': active,
     'host': {'id': hostId, 'username': hostUsername},
+    // Requerido por Room.fromJson generado (Bloque 5): `updatedAt` es un
+    // campo obligatorio del modelo, no opcional.
+    'updated_at': updatedAt,
   };
 }
 
 void main() {
-  group('RoomsService', () {
-    RoomsService buildService(http.Client client, {String? token}) {
+  group('RoomsRemoteSource', () {
+    RoomsRemoteSource buildService(http.Client client, {String? token}) {
       final apiService = ApiService(client: client, tokenStorage: FakeTokenStorage(token));
-      return RoomsService(apiService);
+      return RoomsRemoteSource(apiService);
     }
 
     test('listRooms retorna la lista de salas (GET /rooms/list, sin JWT)', () async {

@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../models/room.dart';
-import 'api_service.dart';
+import '../services/api_service.dart';
 
 /// Excepción con el mensaje de error tal cual lo devuelve el backend
 /// (clave `error` del JSON), para mostrarlo directo en la UI.
@@ -16,8 +16,8 @@ class RoomException implements Exception {
 
 /// Se lanza cuando `PUT /rooms/<id>` responde 409: la sala cambió en el
 /// servidor mientras la edición estaba encolada offline. Trae la versión
-/// vigente del servidor para que quien la capture (normalmente
-/// `SyncService`) descarte la edición local y realinee la caché.
+/// vigente del servidor para que quien la capture (`RoomsRepository`)
+/// descarte la edición local y realinee la caché.
 class RoomConflictException implements Exception {
   const RoomConflictException(this.serverRoom);
   final Room serverRoom;
@@ -26,12 +26,17 @@ class RoomConflictException implements Exception {
   String toString() => 'Conflicto: la sala cambió en el servidor';
 }
 
-/// Servicio de salas (rooms) contra el backend Flask.
+/// Fuente de datos remota de salas (rooms) contra el backend Flask.
 ///
-/// Se completa aquí en la Fase 3 (listar/crear/editar/eliminar salas).
-/// La Fase 4 agrega `processAudio` y `getTaskStatus`.
-class RoomsService {
-  RoomsService(this._apiService);
+/// Taller Semana 13 (Bloque 6): esta clase es la capa "remoto" de la
+/// nueva arquitectura de datos (remoto / local / repositorio). Antes de
+/// este bloque se llamaba `RoomsService` y mezclaba, sin quererlo, la
+/// responsabilidad de hablar HTTP con la de decidir cuándo leer/escribir
+/// caché o encolar offline; ahora solo sabe hablar con el backend — no
+/// conoce `RoomsLocalSource` ni la cola offline. Esa orquestación vive en
+/// `RoomsRepository`.
+class RoomsRemoteSource {
+  RoomsRemoteSource(this._apiService);
 
   final ApiService _apiService;
 
@@ -79,11 +84,12 @@ class RoomsService {
   ///
   /// `expectedUpdatedAt` es el `updated_at` que el cliente tenía en su
   /// caché al momento de encolar esta edición (offline-first: se guarda
-  /// junto a la operación pendiente y se reenvía recién al sincronizar).
-  /// Si el servidor responde 409 (la sala cambió mientras tanto), se
-  /// lanza [RoomConflictException] con la versión vigente del servidor
-  /// en vez de [RoomException], para que el llamador pueda distinguir
-  /// "falló" de "hay que resolver un conflicto".
+  /// junto a la operación pendiente y se reenvía recién al sincronizar,
+  /// ver `RoomsRepository`). Si el servidor responde 409 (la sala cambió
+  /// mientras tanto), se lanza [RoomConflictException] con la versión
+  /// vigente del servidor en vez de [RoomException], para que el
+  /// llamador pueda distinguir "falló" de "hay que resolver un
+  /// conflicto".
   Future<Room> updateRoom(
     int id, {
     String? name,
