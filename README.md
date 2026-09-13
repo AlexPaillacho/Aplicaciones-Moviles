@@ -125,7 +125,8 @@ flutter test
 
 Incluye:
 - `test/widget_test.dart`: `LoginScreen` renderiza los campos email/contraseña y el botón "Ingresar".
-- `test/services/auth_service_test.dart` y `test/services/rooms_service_test.dart`: tests unitarios de los servicios contra un backend simulado (`package:http/testing.dart`), sin necesitar el backend real corriendo.
+- `test/services/auth_service_test.dart` y `test/data/rooms_remote_source_test.dart`: tests unitarios contra un backend simulado (`package:http/testing.dart`), sin necesitar el backend real corriendo.
+- `test/models/room_test.dart` y `test/models/user_test.dart`: serialización generada (`json_serializable`) de `Room`/`User`, incluida la divergencia `host` anidado -> `hostId`/`hostUsername` planos.
 
 ## Nota sobre los audios subidos
 

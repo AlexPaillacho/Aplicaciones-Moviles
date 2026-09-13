@@ -46,6 +46,7 @@ dependencies:
   path: ^1.9.0           # join de rutas para la ubicación del archivo .db
   connectivity_plus: ^6.1.0  # detectar reconexión para disparar la sincronización
   uuid: ^4.5.1           # id único de cliente para cada operación encolada
+  json_annotation: ^4.9.0 # serialización generada (Taller Semana 13, Bloque 5)
 
 dev_dependencies:
   flutter_test:
@@ -57,6 +58,10 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+
+  # Taller Semana 13: generación de (de)serialización de modelos
+  build_runner: ^2.4.13
+  json_serializable: ^6.8.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
