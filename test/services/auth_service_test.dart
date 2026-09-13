@@ -16,6 +16,7 @@ import 'package:speak_english/services/token_storage.dart';
 /// disponible al correr `flutter test`.
 class FakeTokenStorage extends TokenStorage {
   String? _token;
+  String? _refreshToken;
 
   @override
   Future<void> saveToken(String token) async => _token = token;
@@ -24,7 +25,16 @@ class FakeTokenStorage extends TokenStorage {
   Future<String?> readToken() async => _token;
 
   @override
-  Future<void> deleteToken() async => _token = null;
+  Future<void> saveRefreshToken(String token) async => _refreshToken = token;
+
+  @override
+  Future<String?> readRefreshToken() async => _refreshToken;
+
+  @override
+  Future<void> deleteToken() async {
+    _token = null;
+    _refreshToken = null;
+  }
 }
 
 void main() {

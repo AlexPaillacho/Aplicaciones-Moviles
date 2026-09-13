@@ -126,7 +126,11 @@ def create_room():
     name = payload.get('name')
 
     if not name:
-        return jsonify({'error': 'name es requerido'}), 400
+        # Bloque 7: 422 (validación), no 400. Es el endpoint que se usa
+        # para demostrar esta familia en el video del taller — mandar
+        # `POST /rooms` sin `name` (ej. desde Postman) ya no cae en el
+        # 400 genérico, cae en la misma familia que distingue el cliente.
+        return jsonify({'error': 'name es requerido'}), 422
 
     host_id = int(get_jwt_identity())
 

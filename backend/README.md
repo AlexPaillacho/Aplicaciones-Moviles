@@ -23,6 +23,17 @@ DATABASE_URL=sqlite:///dev.db
 JWT_SECRET_KEY=dev-secret-key-please-change-me-in-production-32chars
 
 # Nota: en producción usa SIEMPRE una clave segura y definida por variable de entorno (nunca el valor por defecto).
+
+# Taller Semana 13 (Bloque 8): en APP_ENV=prod, JWT_SECRET_KEY es
+# obligatoria — la app no arranca sin ella (no acepta el valor de
+# ejemplo de arriba). En dev (valor por defecto) sí se acepta, para no
+# forzar un .env solo para levantar el proyecto localmente.
+APP_ENV=dev
+
+# Taller Semana 13: TTL del access token y del refresh token.
+# Baja JWT_ACCESS_TOKEN_EXPIRES_MINUTES a 1 o 2 para forzar la renovación en el video.
+JWT_ACCESS_TOKEN_EXPIRES_MINUTES=15
+JWT_REFRESH_TOKEN_EXPIRES_DAYS=30
 ```
 
 ## Levantar Redis

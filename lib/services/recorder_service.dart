@@ -15,7 +15,7 @@ class RecorderException implements Exception {
 
 /// Envuelve el paquete `record` para grabar audio de práctica y
 /// guardarlo en un archivo temporal antes de subirlo con
-/// `RoomsService.processAudio` (Fase 4). No conoce el backend ni la
+/// `RoomsRemoteSource.processAudio` (Fase 4). No conoce el backend ni la
 /// UI: solo expone `start()`/`stop()`/`dispose()`.
 class RecorderService {
   final AudioRecorder _recorder = AudioRecorder();

@@ -1,35 +1,20 @@
 import 'package:flutter/foundation.dart';
-import 'package:uuid/uuid.dart';
 
+import '../data/rooms_repository.dart';
 import '../models/room.dart';
-import '../services/api_service.dart';
-import '../services/local_db_service.dart';
-import '../services/rooms_service.dart';
-import '../services/sync_service.dart';
 
 /// Estado global de la lista de salas — offline-first (taller Semana 12).
 ///
-/// Todas las lecturas de UI (`rooms`) vienen de la caché local
-/// (`LocalDbService`); `refresh()` intenta actualizarla contra el
-/// backend, pero si no hay conexión simplemente deja lo que ya había en
-/// caché y prende [isOffline]. Las escrituras (`create`/`update`) se
-/// aplican primero de forma optimista en la caché y se encolan; se
-/// intentan sincronizar de inmediato si hay conexión, y si no, quedan
-/// para la próxima reconexión (`SyncService`, disparado desde
-/// `app.dart`).
+/// Taller Semana 13 (Bloque 6): este provider ya no habla con HTTP ni
+/// con SQLite directamente. Toda esa lógica (dónde vive la caché, cómo
+/// se arma la cola de operaciones pendientes, cómo se reintenta la
+/// sincronización) vive en `RoomsRepository`; este provider solo guarda
+/// el estado de UI (`rooms`, `isLoading`, `isOffline`, etc.) y notifica a
+/// los widgets. No sabe, ni le importa, de dónde vino cada `Room`.
 class RoomsProvider extends ChangeNotifier {
-  RoomsProvider({
-    RoomsService? roomsService,
-    LocalDbService? localDb,
-    SyncService? syncService,
-  })  : _roomsService = roomsService ?? RoomsService(ApiService()),
-        _localDb = localDb ?? LocalDbService.instance,
-        _syncService = syncService ?? SyncService();
+  RoomsProvider({RoomsRepository? repository}) : _repository = repository ?? RoomsRepository();
 
-  final RoomsService _roomsService;
-  final LocalDbService _localDb;
-  final SyncService _syncService;
-  final _uuid = const Uuid();
+  final RoomsRepository _repository;
 
   List<Room> _rooms = [];
   bool _isLoading = false;
@@ -52,25 +37,11 @@ class RoomsProvider extends ChangeNotifier {
     _errorMessage = null;
     notifyListeners();
 
-    try {
-      final serverRooms = await _roomsService.listRooms();
-      await _localDb.upsertServerRooms(serverRooms);
-      await _localDb.setLastSyncedAt(DateTime.now());
-      _isOffline = false;
-    } on UnauthorizedException {
-      // Logout y navegación ya ocurren de forma centralizada en
-      // ApiService.onUnauthorized.
-    } on NetworkException {
-      // Sin conexión: la UI sigue mostrando la caché de más abajo, con
-      // el indicador de "actualizado hace X" y el aviso de modo offline.
-      _isOffline = true;
-    } on RoomException catch (e) {
-      _errorMessage = e.message;
-    } catch (_) {
-      _errorMessage = 'Ocurrió un error inesperado';
-    }
+    final outcome = await _repository.refresh();
+    _isOffline = outcome.isOffline;
+    _errorMessage = outcome.errorMessage;
 
-    await _reloadFromCache();
+    await _reloadFromRepository();
 
     _isLoading = false;
     notifyListeners();
@@ -82,30 +53,13 @@ class RoomsProvider extends ChangeNotifier {
     }
   }
 
-  /// Crea una sala. Se aplica de inmediato en la caché local con un id
-  /// temporal negativo (para que aparezca en la lista al toque) y se
-  /// encola; `hostId`/`hostUsername` son los del usuario actual, para
-  /// que la card muestre el host correcto mientras la sala todavía no
-  /// tiene id real del servidor.
+  /// Crea una sala. Se aplica de inmediato en la caché local (optimista,
+  /// vía `RoomsRepository`) y se intenta sincronizar enseguida si hay
+  /// conexión.
   Future<void> create(String name, {int? hostId, String? hostUsername}) async {
-    final tempId = -DateTime.now().microsecondsSinceEpoch;
-    final optimisticRoom = Room(
-      id: tempId,
-      name: name,
-      active: true,
-      hostId: hostId,
-      hostUsername: hostUsername,
-      updatedAt: DateTime.now(),
-    );
+    await _repository.createOptimistic(name, hostId: hostId, hostUsername: hostUsername);
 
-    await _localDb.upsertRoom(optimisticRoom);
-    await _localDb.enqueueCreate(
-      clientOpId: _uuid.v4(),
-      localTempId: tempId,
-      name: name,
-    );
-
-    await _reloadFromCache();
+    await _reloadFromRepository();
     notifyListeners();
 
     await trySyncPending();
@@ -115,22 +69,9 @@ class RoomsProvider extends ChangeNotifier {
   /// `rooms` ahora mismo: su `updatedAt` es la base con la que el
   /// servidor detectará (o no) un conflicto al sincronizar.
   Future<void> update(Room room, {String? name, bool? active}) async {
-    final optimisticRoom = room.copyWith(
-      name: name,
-      active: active,
-      updatedAt: DateTime.now(),
-    );
+    await _repository.updateOptimistic(room, name: name, active: active);
 
-    await _localDb.upsertRoom(optimisticRoom);
-    await _localDb.enqueueUpdate(
-      clientOpId: _uuid.v4(),
-      roomId: room.id,
-      name: name,
-      active: active,
-      baseUpdatedAt: room.updatedAt.toIso8601String(),
-    );
-
-    await _reloadFromCache();
+    await _reloadFromRepository();
     notifyListeners();
 
     await trySyncPending();
@@ -141,9 +82,9 @@ class RoomsProvider extends ChangeNotifier {
   /// detectar reconexión.
   Future<void> trySyncPending() async {
     try {
-      final syncedSomething = await _syncService.processPendingQueue();
+      final syncedSomething = await _repository.trySyncPending();
       if (syncedSomething) {
-        await _reloadFromCache();
+        await _reloadFromRepository();
         notifyListeners();
       }
     } catch (_) {
@@ -152,16 +93,16 @@ class RoomsProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> _reloadFromCache() async {
-    _rooms = await _localDb.getCachedRooms();
-    _lastSyncedAt = await _localDb.getLastSyncedAt();
-    _pendingCount = await _localDb.countPending();
+  Future<void> _reloadFromRepository() async {
+    _rooms = await _repository.getCachedRooms();
+    _lastSyncedAt = await _repository.getLastSyncedAt();
+    _pendingCount = await _repository.getPendingCount();
   }
 
   /// Se llama desde el logout: borra toda la caché y la cola pendiente
   /// (el taller exige no dejar datos de la sesión en el dispositivo).
   Future<void> clearLocalData() async {
-    await _localDb.clearAll();
+    await _repository.clearLocalData();
     _rooms = [];
     _lastSyncedAt = null;
     _pendingCount = 0;

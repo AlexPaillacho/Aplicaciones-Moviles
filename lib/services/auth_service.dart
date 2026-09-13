@@ -17,7 +17,7 @@ class AuthException implements Exception {
 /// Servicio de autenticación contra el backend Flask.
 class AuthService {
   AuthService({ApiService? apiService, TokenStorage? tokenStorage})
-      : _apiService = apiService ?? ApiService(),
+      : _apiService = apiService ?? ApiService.instance,
         _tokenStorage = tokenStorage ?? TokenStorage();
 
   final ApiService _apiService;
@@ -37,9 +37,10 @@ class AuthService {
     }
   }
 
-  /// `POST /auth/login`. Guarda el `access_token` en `TokenStorage` y lo
-  /// retorna. Lanza `AuthException` con el mensaje del backend si falla
-  /// (credenciales inválidas -> 401).
+  /// `POST /auth/login`. Guarda `access_token` y `refresh_token` (Bloque
+  /// 4) en `TokenStorage` y retorna el `access_token`. Lanza
+  /// `AuthException` con el mensaje del backend si falla (credenciales
+  /// inválidas -> 401).
   Future<String> login(String email, String password) async {
     final response = await _apiService.post('/auth/login', body: {
       'email': email,
@@ -52,7 +53,8 @@ class AuthService {
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     final token = data['access_token'] as String;
-    await _tokenStorage.saveToken(token);
+    final refreshToken = data['refresh_token'] as String?;
+    await _tokenStorage.saveTokens(accessToken: token, refreshToken: refreshToken);
     return token;
   }
 
@@ -72,7 +74,7 @@ class AuthService {
 
   /// Callback global opcional, configurado una sola vez en `app.dart`,
   /// para limpiar cualquier almacén local que no sea el token (ej. la
-  /// caché de rooms y la cola offline en `LocalDbService`). El taller
+  /// caché de rooms y la cola offline en `RoomsLocalSource`, vía `RoomsRepository`). El taller
   /// de Semana 12 exige borrar la totalidad del almacén local al cerrar
   /// sesión, no solo el token.
   static Future<void> Function()? onLogout;

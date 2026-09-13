@@ -3,7 +3,12 @@ import os
 from functools import wraps
 
 from flask import Blueprint, g, jsonify, request
-from flask_jwt_extended import create_access_token, get_jwt_identity, jwt_required
+from flask_jwt_extended import (
+    create_access_token,
+    create_refresh_token,
+    get_jwt_identity,
+    jwt_required,
+)
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.cache import redis_client
@@ -103,7 +108,11 @@ def register():
     password = payload.get('password')
 
     if not username or not email or not password:
-        return jsonify({'error': 'username, email y password son requeridos'}), 400
+        # Taller Semana 13 (Bloque 7): 422, no 400 — la petición está bien
+        # formada (es JSON válido), lo que falla es la VALIDACIÓN de los
+        # datos que trae. El cliente Flutter distingue esta familia
+        # (`ValidationException`) de fallos de conexión/timeout.
+        return jsonify({'error': 'username, email y password son requeridos'}), 422
 
     # Evitar duplicados
     existing = User.query.filter_by(email=email).first()
@@ -130,7 +139,9 @@ def login():
     password = payload.get('password')
 
     if not email or not password:
-        return jsonify({'error': 'email y password son requeridos'}), 400
+        # Bloque 7: mismo criterio que en /auth/register — falta de datos
+        # es 422, no 400.
+        return jsonify({'error': 'email y password son requeridos'}), 422
 
     user = User.query.filter_by(email=email).first()
     if not user:
@@ -141,9 +152,27 @@ def login():
 
     # identity guardada como string (JWT en Flask-JWT-Extended suele serializar/validar como str)
     access_token = create_access_token(identity=str(user.id))
+    refresh_token = create_refresh_token(identity=str(user.id))
+
+    return jsonify({
+        'access_token': access_token,
+        'refresh_token': refresh_token,
+    }), 200
 
 
-    return jsonify({'access_token': access_token}), 200
+@auth_bp.route('/auth/refresh', methods=['POST'])
+@jwt_required(refresh=True)
+def refresh():
+    """Emite un nuevo access_token a partir de un refresh_token válido.
+
+    Taller Semana 13: este es el endpoint que consume el interceptor de
+    renovación del cliente Flutter cuando una llamada autenticada recibe
+    401. Requiere el `refresh_token` (no el `access_token`) en el header
+    `Authorization: Bearer <refresh_token>`.
+    """
+    identity = get_jwt_identity()
+    new_access_token = create_access_token(identity=identity)
+    return jsonify({'access_token': new_access_token}), 200
 
 
 @auth_bp.route('/auth/me', methods=['GET'])

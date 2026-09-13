@@ -5,7 +5,7 @@ import '../../core/tokens.dart';
 import '../../models/room.dart';
 import '../../services/api_service.dart';
 import '../../services/recorder_service.dart';
-import '../../services/rooms_service.dart';
+import '../../data/rooms_remote_source.dart';
 import '../../state/auth_provider.dart';
 import '../../state/rooms_provider.dart';
 import '../../widgets/app_button.dart';
@@ -30,7 +30,7 @@ class RoomDetailScreen extends StatefulWidget {
 }
 
 class _RoomDetailScreenState extends State<RoomDetailScreen> {
-  final _roomsService = RoomsService(ApiService());
+  final _roomsService = RoomsRemoteSource(ApiService.instance);
   final _recorderService = RecorderService();
 
   bool _deleting = false;
