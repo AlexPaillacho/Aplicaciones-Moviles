@@ -2,6 +2,7 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 import '../models/room.dart';
+import '../models/user_location.dart';
 
 /// Fuente de datos local de salas (rooms): caché SQLite + cola de
 /// operaciones offline (taller Semana 12).
@@ -14,10 +15,12 @@ import '../models/room.dart';
 /// escribir SQLite — no llama al backend ni decide cuándo sincronizar
 /// (eso vive en `RoomsRepository`).
 ///
-/// Tres tablas, todas SOLO con datos no sensibles (nombre de sala,
-/// estado activo/inactivo, timestamps): el token JWT NUNCA pasa por
-/// acá, sigue viviendo exclusivamente en `TokenStorage`
-/// (`flutter_secure_storage`), como exige el taller.
+/// Cuatro tablas, con datos no sensibles (nombre de sala, estado
+/// activo/inactivo, timestamps) y, desde el Taller Semana 14, la
+/// ubicación APROXIMADA del usuario (redondeada a ~1 km, ver
+/// `UserLocation`), que se borra por completo en el logout. El token
+/// JWT NUNCA pasa por acá, sigue viviendo exclusivamente en
+/// `TokenStorage` (`flutter_secure_storage`), como exige el taller.
 ///
 /// - `rooms_cache`: última copia conocida de cada sala, para lectura sin
 ///   conexión. Incluye tanto salas confirmadas por el servidor como
@@ -29,6 +32,14 @@ import '../models/room.dart';
 /// - `sync_meta`: pares clave/valor; hoy solo se usa para
 ///   `last_synced_at` (cuándo fue el último `GET /rooms/list` exitoso),
 ///   que alimenta el indicador de "actualizado hace X" en la UI.
+/// - `last_location` (Semana 14, Fase 4): UNA sola fila (`id = 1`) con la
+///   última posición aproximada conocida (`status = 'available'`) o el
+///   estado "sin ubicación" (`status = 'unavailable'`, sin
+///   coordenadas) cuando el permiso no está concedido. Es lo que
+///   `RoomsRepository` envía al backend al listar/crear salas.
+///   `pending_room_ops` guarda además `latitude`/`longitude` de las
+///   creaciones encoladas, para enviar la ubicación del momento en que
+///   se creó la sala aunque se sincronice mucho después.
 class RoomsLocalSource {
   RoomsLocalSource._internal();
   static final RoomsLocalSource instance = RoomsLocalSource._internal();
@@ -46,7 +57,7 @@ class RoomsLocalSource {
 
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE rooms_cache (
@@ -69,7 +80,9 @@ class RoomsLocalSource {
             base_updated_at TEXT,
             attempt_count INTEGER NOT NULL DEFAULT 0,
             status TEXT NOT NULL DEFAULT 'pending',
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            latitude REAL,
+            longitude REAL
           )
         ''');
         await db.execute('''
@@ -78,8 +91,33 @@ class RoomsLocalSource {
             value TEXT
           )
         ''');
+        await _createLastLocationTable(db);
+      },
+      // v1 -> v2 (Taller Semana 14, Fase 4): agrega la ubicación SIN
+      // borrar la caché ni la cola pendiente que ya tenga el dispositivo.
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute(
+              'ALTER TABLE pending_room_ops ADD COLUMN latitude REAL');
+          await db.execute(
+              'ALTER TABLE pending_room_ops ADD COLUMN longitude REAL');
+          await _createLastLocationTable(db);
+        }
       },
     );
+  }
+
+  Future<void> _createLastLocationTable(Database db) {
+    // CHECK (id = 1): la tabla nunca tiene más de una fila.
+    return db.execute('''
+      CREATE TABLE last_location (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        status TEXT NOT NULL,
+        latitude REAL,
+        longitude REAL,
+        captured_at TEXT NOT NULL
+      )
+    ''');
   }
 
   // ===== rooms_cache =====
@@ -163,10 +201,14 @@ class RoomsLocalSource {
 
   // ===== pending_room_ops =====
 
+  /// [latitude]/[longitude] (Fase 4): ubicación aproximada del usuario al
+  /// momento de crear la sala, o `null` si no hay ubicación disponible.
   Future<String> enqueueCreate({
     required String clientOpId,
     required int localTempId,
     required String name,
+    double? latitude,
+    double? longitude,
   }) async {
     final db = await _database;
     await db.insert('pending_room_ops', {
@@ -180,6 +222,8 @@ class RoomsLocalSource {
       'attempt_count': 0,
       'status': 'pending',
       'created_at': DateTime.now().toIso8601String(),
+      'latitude': latitude,
+      'longitude': longitude,
     });
     return clientOpId;
   }
@@ -257,17 +301,85 @@ class RoomsLocalSource {
     return value == null ? null : DateTime.tryParse(value);
   }
 
+  // ===== last_location (Taller Semana 14, Fase 4) =====
+
+  /// Guarda la última posición aproximada conocida (reemplaza la fila
+  /// anterior, sea una posición o el estado "sin ubicación").
+  Future<void> saveLocation(UserLocation location) async {
+    final db = await _database;
+    await db.insert(
+      'last_location',
+      {
+        'id': 1,
+        'status': 'available',
+        'latitude': location.latitude,
+        'longitude': location.longitude,
+        'captured_at': location.capturedAt.toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Guarda el estado "sin ubicación" y BORRA las coordenadas
+  /// anteriores: si el permiso ya no está concedido, no se conserva ni
+  /// se vuelve a enviar una posición vieja.
+  Future<void> saveLocationUnavailable() async {
+    final db = await _database;
+    await db.insert(
+      'last_location',
+      {
+        'id': 1,
+        'status': 'unavailable',
+        'latitude': null,
+        'longitude': null,
+        'captured_at': DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Lo último guardado sobre la ubicación, o `null` si nunca se guardó
+  /// nada (ej. el usuario todavía no interactuó con "salas cercanas").
+  Future<CachedLocation?> getCachedLocation() async {
+    final db = await _database;
+    final rows = await db.query('last_location',
+        where: 'id = ?', whereArgs: [1], limit: 1);
+    if (rows.isEmpty) return null;
+
+    final row = rows.first;
+    final savedAt =
+        DateTime.tryParse(row['captured_at'] as String? ?? '') ?? DateTime.now();
+
+    if (row['status'] == 'available') {
+      final latitude = (row['latitude'] as num?)?.toDouble();
+      final longitude = (row['longitude'] as num?)?.toDouble();
+      if (latitude != null && longitude != null) {
+        return CachedLocation(
+          location: UserLocation(
+            latitude: latitude,
+            longitude: longitude,
+            capturedAt: savedAt,
+          ),
+          updatedAt: savedAt,
+        );
+      }
+    }
+    return CachedLocation(updatedAt: savedAt);
+  }
+
   // ===== Cierre de sesión =====
 
-  /// Borra por completo el almacén local (las 3 tablas). Se llama desde
+  /// Borra por completo el almacén local (las 4 tablas). Se llama desde
   /// el logout: el taller exige no dejar datos de sesiones anteriores en
-  /// el dispositivo, incluida cualquier operación offline sin enviar.
+  /// el dispositivo, incluida cualquier operación offline sin enviar y
+  /// la ubicación del usuario.
   Future<void> clearAll() async {
     final db = await _database;
     final batch = db.batch();
     batch.delete('rooms_cache');
     batch.delete('pending_room_ops');
     batch.delete('sync_meta');
+    batch.delete('last_location');
     await batch.commit(noResult: true);
   }
 }

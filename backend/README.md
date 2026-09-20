@@ -72,3 +72,11 @@ Notas para la demo:
 - `PUT /rooms/<id>` invalida la clave correspondiente en Redis.
 - `POST /rooms/<id>/process-audio` requiere JWT.
 
+### Ubicación aproximada (Taller Semana 14, Fase 4)
+La app móvil puede enviar la ubicación **aproximada** del usuario (ya redondeada a ~1 km en el cliente) para una futura ordenación de salas por cercanía. Es **opcional**: si falta o es inválida se ignora y todo funciona igual que antes.
+- `GET /rooms/list?optimized=true&lat=40.42&lng=-3.70` → la respuesta incluye `user_location` (`{"latitude": .., "longitude": ..}` o `null`).
+- `POST /rooms` con `{"name": "...", "latitude": 40.42, "longitude": -3.7}` (JWT) → la respuesta incluye `user_location`.
+- Al recibirla, el backend imprime en consola una línea `--> [LOCATION] ...` (útil para la demo junto con la respuesta en Postman).
+- Por ahora **no se guarda** en la BD ni se ordena con ella: las salas todavía no tienen columnas de coordenadas (no hay cambios de esquema en esta fase).
+- Validación aislada en `app/geo.py`. Pruebas: `cd backend && python -m unittest discover -s tests -v`.
+

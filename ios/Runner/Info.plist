@@ -6,6 +6,8 @@
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Se necesita el micrófono para grabar tu práctica de inglés.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Usamos tu ubicación para mostrarte salas de práctica cercanas mientras usas la app.</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>

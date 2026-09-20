@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../data/rooms_repository.dart';
 import '../models/room.dart';
+import '../models/user_location.dart';
 
 /// Estado global de la lista de salas — offline-first (taller Semana 12).
 ///
@@ -22,6 +23,7 @@ class RoomsProvider extends ChangeNotifier {
   bool _isOffline = false;
   DateTime? _lastSyncedAt;
   int _pendingCount = 0;
+  String? _lastSyncError;
 
   List<Room> get rooms => _rooms;
   bool get isLoading => _isLoading;
@@ -29,6 +31,20 @@ class RoomsProvider extends ChangeNotifier {
   bool get isOffline => _isOffline;
   DateTime? get lastSyncedAt => _lastSyncedAt;
   int get pendingCount => _pendingCount;
+
+  /// Mensaje del backend (ej. 422) para la última operación de creación
+  /// o edición que se rechazó al sincronizar. La UI lo lee una sola vez
+  /// (vía [consumeLastSyncError]) para mostrarlo (ej. en un SnackBar) y
+  /// no repetirlo en cada rebuild.
+  String? get lastSyncError => _lastSyncError;
+
+  /// Devuelve el último error de sincronización y lo limpia, para que
+  /// no se vuelva a mostrar si el widget se reconstruye.
+  String? consumeLastSyncError() {
+    final error = _lastSyncError;
+    _lastSyncError = null;
+    return error;
+  }
 
   /// `GET /rooms/list` con caída a caché. Se llama al entrar a la
   /// pantalla y en el pull-to-refresh.
@@ -77,14 +93,35 @@ class RoomsProvider extends ChangeNotifier {
     await trySyncPending();
   }
 
+  /// Taller Semana 14 (Fase 4): registra la ubicación aproximada del
+  /// usuario (o `null` = "sin ubicación", si el permiso no está
+  /// concedido). Se guarda en la caché local y, si la ubicación
+  /// enviable cambió, se refresca la lista para que el backend reciba la
+  /// nueva ubicación (`GET /rooms/list?lat=..&lng=..`).
+  ///
+  /// Es "best effort": un fallo al guardar no debe romper la pantalla.
+  Future<void> updateLocation(UserLocation? location) async {
+    try {
+      final changed = await _repository.saveLocation(location);
+      if (changed) await refresh();
+    } catch (e) {
+      debugPrint('[RoomsProvider] No se pudo guardar la ubicación: $e');
+    }
+  }
+
   /// Procesa la cola pendiente si hay conexión. Se llama tras
   /// crear/editar, tras un `refresh()` exitoso, y desde `app.dart` al
   /// detectar reconexión.
   Future<void> trySyncPending() async {
     try {
-      final syncedSomething = await _repository.trySyncPending();
-      if (syncedSomething) {
+      final outcome = await _repository.trySyncPending();
+      if (outcome.errorMessage != null) {
+        _lastSyncError = outcome.errorMessage;
+      }
+      if (outcome.syncedAny) {
         await _reloadFromRepository();
+      }
+      if (outcome.syncedAny || outcome.errorMessage != null) {
         notifyListeners();
       }
     } catch (_) {

@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/room.dart';
+import '../models/user_location.dart';
 import '../services/api_service.dart';
 import 'rooms_local_source.dart';
 import 'rooms_remote_source.dart';
@@ -20,6 +21,32 @@ class RoomsRefreshOutcome {
 
   /// Mensaje de error a mostrar, si el backend respondió algo distinto
   /// de éxito (`null` si no hubo error).
+  final String? errorMessage;
+}
+
+/// Resultado de `RoomsRepository.trySyncPending()`.
+///
+/// `RoomsProvider` lo usa para saber si hay que refrescar la lista
+/// (`syncedAny`) y, si el backend rechazó alguna operación encolada con
+/// un 422, para mostrarle ese mensaje al usuario (`errorMessage`) en vez
+/// de dejarlo solo en el log.
+class RoomsSyncOutcome {
+  const RoomsSyncOutcome({this.syncedAny = false, this.errorMessage});
+  final bool syncedAny;
+  final String? errorMessage;
+}
+
+/// Resultado interno de procesar una operación de la cola.
+class _OperationResult {
+  const _OperationResult({required this.resolved, this.errorMessage});
+
+  /// `true`: la operación quedó resuelta (éxito, conflicto resuelto,
+  /// rechazada por validación, o reintentos agotados) y hay que seguir
+  /// con la próxima de la cola. `false`: no hay conexión real, hay que
+  /// cortar el procesamiento del resto de la cola.
+  final bool resolved;
+
+  /// Mensaje del backend si la operación fue rechazada con 422.
   final String? errorMessage;
 }
 
@@ -72,6 +99,55 @@ class RoomsRepository {
 
   Future<int> getPendingCount() => _local.countPending();
 
+  // ===== Ubicación (Taller Semana 14, Fase 4) =====
+
+  /// Última ubicación guardada localmente (posición aproximada o el
+  /// estado "sin ubicación"); `null` si nunca se guardó nada.
+  Future<CachedLocation?> getCachedLocation() => _local.getCachedLocation();
+
+  /// Guarda en la caché local la ubicación aproximada del usuario, o el
+  /// estado "sin ubicación" si [location] es `null` (permiso no
+  /// concedido: además se BORRAN las coordenadas anteriores, para no
+  /// volver a enviar una posición vieja).
+  ///
+  /// Devuelve `true` si la ubicación ENVIABLE cambió (había otra
+  /// posición o no había ninguna): quien llama usa eso para decidir si
+  /// vale la pena refrescar la lista y así mandarle la nueva ubicación
+  /// al backend. Guardar el estado "sin ubicación" devuelve siempre
+  /// `false`.
+  Future<bool> saveLocation(UserLocation? location) async {
+    final cached = await _local.getCachedLocation();
+
+    if (location == null) {
+      // Evita reescribir la fila si ya estaba en "sin ubicación".
+      if (cached == null || cached.isAvailable) {
+        await _local.saveLocationUnavailable();
+        debugPrint('[RoomsRepository] Sin ubicación: se guardó el estado '
+            '"sin ubicación" y se borraron las coordenadas locales.');
+      }
+      return false;
+    }
+
+    final previous = cached?.location;
+    await _local.saveLocation(location);
+    debugPrint('[RoomsRepository] Ubicación aproximada guardada en la '
+        'caché local: ${location.latitude}, ${location.longitude}');
+    return previous == null || !previous.hasSameCoordinatesAs(location);
+  }
+
+  /// Ubicación que se puede enviar al backend ahora mismo: la última
+  /// posición conocida, o `null` si no hay (nunca se obtuvo, o el
+  /// estado guardado es "sin ubicación"). Es "best effort": si la caché
+  /// falla al leerse, se sigue sin ubicación en vez de romper el
+  /// listado o la creación de salas.
+  Future<UserLocation?> _sendableLocation() async {
+    try {
+      return (await _local.getCachedLocation())?.location;
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ===== Refresh contra el backend =====
 
   /// `GET /rooms/list`, con la caché como fuente de verdad para la UI:
@@ -80,7 +156,10 @@ class RoomsRepository {
   /// llamador qué pasó (sin conexión / error del backend / éxito).
   Future<RoomsRefreshOutcome> refresh() async {
     try {
-      final serverRooms = await _listRoomsWithRetry();
+      // Fase 4: si hay ubicación aproximada guardada, viaja con la
+      // petición (opcional; sin ella el listado funciona igual).
+      final location = await _sendableLocation();
+      final serverRooms = await _listRoomsWithRetry(location);
       await _local.upsertServerRooms(serverRooms);
       await _local.setLastSyncedAt(DateTime.now());
       return const RoomsRefreshOutcome();
@@ -111,13 +190,13 @@ class RoomsRepository {
   /// deja la decisión al llamador (`refresh()` cae a la caché + botón
   /// manual). No se reintenta ante [NoConnectionException]: sin ninguna
   /// interfaz de red activa, reintentar de inmediato no cambia nada.
-  Future<List<Room>> _listRoomsWithRetry() async {
+  Future<List<Room>> _listRoomsWithRetry(UserLocation? location) async {
     try {
-      return await _remote.listRooms();
+      return await _remote.listRooms(location: location);
     } on RequestTimeoutException {
-      return _remote.listRooms();
+      return _remote.listRooms(location: location);
     } on ServerUnavailableException {
-      return _remote.listRooms();
+      return _remote.listRooms(location: location);
     }
   }
 
@@ -129,6 +208,10 @@ class RoomsRepository {
   /// `hostUsername` son los del usuario actual, para que la card
   /// muestre el host correcto mientras la sala todavía no tiene id real
   /// del servidor.
+  ///
+  /// Fase 4: si hay ubicación aproximada disponible, se guarda junto a la
+  /// operación encolada. Así se envía la ubicación del momento en que el
+  /// usuario creó la sala aunque se sincronice mucho después (offline).
   Future<void> createOptimistic(String name, {int? hostId, String? hostUsername}) async {
     final tempId = -DateTime.now().microsecondsSinceEpoch;
     final optimisticRoom = Room(
@@ -141,11 +224,15 @@ class RoomsRepository {
       updatedAt: DateTime.now(),
     );
 
+    final location = await _sendableLocation();
+
     await _local.upsertRoom(optimisticRoom);
     await _local.enqueueCreate(
       clientOpId: _uuid.v4(),
       localTempId: tempId,
       name: name,
+      latitude: location?.latitude,
+      longitude: location?.longitude,
     );
   }
 
@@ -175,10 +262,11 @@ class RoomsRepository {
   /// Procesa toda la cola pendiente, en orden FIFO. Devuelve `true` si
   /// se sincronizó al menos una operación (para que `RoomsProvider` sepa
   /// que vale la pena refrescar la lista desde la caché).
-  Future<bool> trySyncPending() async {
-    if (_isSyncing) return false; // evita procesar la cola en paralelo
+  Future<RoomsSyncOutcome> trySyncPending() async {
+    if (_isSyncing) return const RoomsSyncOutcome(); // evita procesar la cola en paralelo
     _isSyncing = true;
     var syncedAny = false;
+    String? validationError;
 
     try {
       final ops = await _local.getPendingOperations();
@@ -186,9 +274,14 @@ class RoomsRepository {
       for (final op in ops) {
         if (op['status'] == 'failed') continue; // requiere reintento manual
 
-        final ok = await _processOperationWithRetry(op);
-        if (ok) {
+        final result = await _processOperationWithRetry(op);
+        if (result.resolved) {
           syncedAny = true;
+          // Nos quedamos con el primer error de validación de esta
+          // pasada (alcanza para avisarle al usuario qué operación
+          // rebotó; si hay varias, el resto queda igual disponible en
+          // el log).
+          validationError ??= result.errorMessage;
         } else {
           // Si una operación de la cola no se pudo enviar por falta de
           // red, asumimos que el resto tampoco podrá: cortamos acá y
@@ -201,7 +294,7 @@ class RoomsRepository {
       _isSyncing = false;
     }
 
-    return syncedAny;
+    return RoomsSyncOutcome(syncedAny: syncedAny, errorMessage: validationError);
   }
 
   /// Intenta [op] hasta [maxAttempts] veces con espera creciente — pero
@@ -211,7 +304,7 @@ class RoomsRepository {
   /// resuelto, o agotar los intentos permitidos— devuelve `true` porque
   /// esa operación puntual ya quedó resuelta (sincronizada, resuelta por
   /// conflicto, o marcada `failed` para reintento manual).
-  Future<bool> _processOperationWithRetry(Map<String, Object?> op) async {
+  Future<_OperationResult> _processOperationWithRetry(Map<String, Object?> op) async {
     final clientOpId = op['client_op_id'] as String;
 
     // `update` es un PUT con id: reenviarlo no tiene efectos distintos
@@ -230,36 +323,48 @@ class RoomsRepository {
       try {
         await _applyOperation(op);
         await _local.deleteOperation(clientOpId);
-        return true;
+        return const _OperationResult(resolved: true);
       } on RoomConflictException catch (e) {
         await _resolveConflict(op, e.serverRoom);
-        return true;
+        return const _OperationResult(resolved: true);
       } on NetworkException {
         // Sin conexión real (no solo el servidor caído): no
         // reintentamos en caliente, esperamos la próxima señal de
         // reconexión.
-        return false;
+        return const _OperationResult(resolved: false);
       } on ValidationException catch (e) {
         // 422: el problema es el contenido de la operación (ej. un
         // `name` que el backend rechazó), no algo transitorio.
-        // Reintentar el mismo payload nunca lo arregla, así que se
-        // marca `failed` de inmediato en vez de gastar los reintentos
-        // con backoff — aplica a `create` y a `update` por igual.
-        await _local.markAttempt(clientOpId, failed: true);
+        // Reintentar el mismo payload nunca lo arregla.
+        if (opType == 'create') {
+          // La sala optimista (id temporal) nunca fue válida para el
+          // servidor: la sacamos de la caché en vez de dejarla
+          // "fantasma" en la lista, y descartamos la operación (no
+          // tiene sentido reintentar el mismo payload).
+          final localTempId = op['local_temp_id'] as int?;
+          if (localTempId != null) {
+            await _local.deleteRoom(localTempId);
+          }
+          await _local.deleteOperation(clientOpId);
+        } else {
+          // En un `update` sí conviene dejarla para reintento manual:
+          // la sala original sigue viva, solo falló la edición.
+          await _local.markAttempt(clientOpId, failed: true);
+        }
         debugPrint('[RoomsRepository] Operación $clientOpId inválida: ${e.message}');
-        return true;
+        return _OperationResult(resolved: true, errorMessage: e.message);
       } catch (_) {
         attempt += 1;
         final giveUp = attempt >= attemptsAllowed;
         await _local.markAttempt(clientOpId, failed: giveUp);
         if (giveUp) {
-          return true; // se dio por vencida esta operación; sigue la cola
+          return const _OperationResult(resolved: true); // se dio por vencida; sigue la cola
         }
         final backoff = Duration(seconds: 1 << attempt); // 2s, 4s, 8s, 16s...
         await Future.delayed(backoff);
       }
     }
-    return true;
+    return const _OperationResult(resolved: true);
   }
 
   Future<void> _applyOperation(Map<String, Object?> op) async {
@@ -268,7 +373,21 @@ class RoomsRepository {
     if (opType == 'create') {
       final localTempId = op['local_temp_id'] as int;
       final name = op['name'] as String;
-      final room = await _remote.createRoom(name);
+
+      // Fase 4: ubicación guardada al encolar la creación (null si en
+      // ese momento no había ubicación disponible).
+      final latitude = (op['latitude'] as num?)?.toDouble();
+      final longitude = (op['longitude'] as num?)?.toDouble();
+      final location = (latitude != null && longitude != null)
+          ? UserLocation(
+              latitude: latitude,
+              longitude: longitude,
+              capturedAt: DateTime.tryParse(op['created_at'] as String? ?? '') ??
+                  DateTime.now(),
+            )
+          : null;
+
+      final room = await _remote.createRoom(name, location: location);
       await _local.replaceTempRoomId(localTempId, room);
       return;
     }

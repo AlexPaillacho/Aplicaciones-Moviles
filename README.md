@@ -74,7 +74,7 @@ flutter run --dart-define=API_BASE_URL=http://10.0.2.2:5000
 
 En un dispositivo físico en la misma red, usa la IP local de tu máquina en vez de `10.0.2.2` — y agrega esa IP en `android/app/src/main/res/xml/network_security_config.xml` (ver nota abajo).
 
-Al conectar el celular/emulador por primera vez, la app pedirá permiso de micrófono (`RECORD_AUDIO` en Android) para poder grabar la práctica.
+La app pide permiso de micrófono (`RECORD_AUDIO`) al pulsar "Grabar" dentro de una sala, y el permiso de ubicación aproximada (`ACCESS_COARSE_LOCATION`) solo si el usuario pulsa "Ver salas cercanas" (opcional). Ninguno se solicita al abrir la app, y sin ellos el resto de la app sigue funcionando.
 
 ### Tráfico HTTP hacia el backend local (solo desarrollo)
 

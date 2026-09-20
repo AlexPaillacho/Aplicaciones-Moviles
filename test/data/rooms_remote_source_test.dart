@@ -11,6 +11,7 @@ import 'package:http/testing.dart';
 
 import 'package:speak_english/services/api_service.dart';
 import 'package:speak_english/data/rooms_remote_source.dart';
+import 'package:speak_english/models/user_location.dart';
 import 'package:speak_english/services/token_storage.dart';
 
 /// TokenStorage en memoria para tests: evita tocar
@@ -94,6 +95,71 @@ void main() {
       });
 
       expect(() => buildService(client).listRooms(), throwsA(isA<RoomException>()));
+    });
+
+    // ===== Taller Semana 14, Fase 4: ubicación aproximada =====
+
+    test('listRooms envía lat y lng cuando hay ubicación', () async {
+      final client = MockClient((request) async {
+        expect(request.url.path, '/rooms/list');
+        expect(request.url.queryParameters['optimized'], 'true');
+        expect(request.url.queryParameters['lat'], '12.35');
+        expect(request.url.queryParameters['lng'], '-76.54');
+        return http.Response(jsonEncode({'rooms': []}), 200);
+      });
+
+      final location =
+          UserLocation.approximate(latitude: 12.34567, longitude: -76.54321);
+
+      await buildService(client).listRooms(location: location);
+    });
+
+    test('listRooms NO envía lat/lng sin ubicación (petición igual a la de antes)',
+        () async {
+      final client = MockClient((request) async {
+        expect(request.url.queryParameters.containsKey('lat'), isFalse);
+        expect(request.url.queryParameters.containsKey('lng'), isFalse);
+        expect(request.url.queryParameters['optimized'], 'true');
+        return http.Response(jsonEncode({'rooms': []}), 200);
+      });
+
+      await buildService(client).listRooms();
+    });
+
+    test('createRoom envía latitude y longitude cuando hay ubicación', () async {
+      final client = MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/rooms');
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['name'], 'Sala cercana');
+        expect(body['latitude'], 12.35);
+        expect(body['longitude'], -76.54);
+        return http.Response(
+          jsonEncode({'created': true, 'room': _roomJson(id: 10, name: 'Sala cercana')}),
+          201,
+        );
+      });
+
+      final location =
+          UserLocation.approximate(latitude: 12.34567, longitude: -76.54321);
+
+      final room = await buildService(client, token: 'token-abc')
+          .createRoom('Sala cercana', location: location);
+
+      expect(room.id, 10);
+    });
+
+    test('createRoom sin ubicación envía solo el nombre', () async {
+      final client = MockClient((request) async {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body.keys.toList(), ['name']);
+        return http.Response(
+          jsonEncode({'created': true, 'room': _roomJson(id: 11, name: 'Sala sola')}),
+          201,
+        );
+      });
+
+      await buildService(client, token: 'token-abc').createRoom('Sala sola');
     });
 
     test('getRoom retorna la sala (GET /rooms/<id>, sin JWT)', () async {

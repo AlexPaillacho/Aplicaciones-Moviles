@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../models/room.dart';
+import '../models/user_location.dart';
 import '../services/api_service.dart';
 
 /// Excepción con el mensaje de error tal cual lo devuelve el backend
@@ -41,10 +42,24 @@ class RoomsRemoteSource {
   final ApiService _apiService;
 
   /// `GET /rooms/list?optimized=...` (público, sin JWT).
-  Future<List<Room>> listRooms({bool optimized = true}) async {
+  ///
+  /// Taller Semana 14 (Fase 4): si [location] no es `null`, se agregan
+  /// `lat` y `lng` a la consulta para que el backend pueda, a futuro,
+  /// ordenar por cercanía. Sin ubicación la petición es idéntica a la de
+  /// antes: el parámetro es opcional y la lista funciona igual.
+  Future<List<Room>> listRooms({
+    bool optimized = true,
+    UserLocation? location,
+  }) async {
+    final query = <String, String>{'optimized': optimized.toString()};
+    if (location != null) {
+      query['lat'] = location.latitude.toString();
+      query['lng'] = location.longitude.toString();
+    }
+
     final response = await _apiService.get(
       '/rooms/list',
-      queryParameters: {'optimized': optimized.toString()},
+      queryParameters: query,
     );
 
     if (response.statusCode != 200) {
@@ -69,8 +84,18 @@ class RoomsRemoteSource {
   }
 
   /// `POST /rooms` (JWT, usa `authorizedPost`).
-  Future<Room> createRoom(String name) async {
-    final response = await _apiService.authorizedPost('/rooms', body: {'name': name});
+  ///
+  /// Taller Semana 14 (Fase 4): si [location] no es `null`, se envía
+  /// como `latitude`/`longitude` en el cuerpo (ubicación aproximada del
+  /// usuario al crear la sala). Sin ubicación el cuerpo es solo `name`,
+  /// igual que antes.
+  Future<Room> createRoom(String name, {UserLocation? location}) async {
+    final body = <String, dynamic>{'name': name};
+    if (location != null) {
+      body['latitude'] = location.latitude;
+      body['longitude'] = location.longitude;
+    }
+    final response = await _apiService.authorizedPost('/rooms', body: body);
 
     if (response.statusCode != 201) {
       throw RoomException(_extractError(response.body));

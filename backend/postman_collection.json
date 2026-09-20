@@ -161,6 +161,46 @@
           "path": ["rooms", "1", "process-audio"]
         }
       }
+    },
+    {
+      "name": "GET /rooms/list con ubicación aproximada (Taller Semana 14, Fase 4)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:5000/rooms/list?optimized=true&lat=40.42&lng=-3.70",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["rooms", "list"],
+          "query": [
+            { "key": "optimized", "value": "true" },
+            { "key": "lat", "value": "40.42" },
+            { "key": "lng", "value": "-3.70" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "POST /rooms con ubicación aproximada (Taller Semana 14, Fase 4, requiere JWT)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{access_token}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Sala cercana\",\n  \"latitude\": 40.42,\n  \"longitude\": -3.7\n}"
+        },
+        "url": {
+          "raw": "http://localhost:5000/rooms",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["rooms"]
+        }
+      }
     }
   ]
 }

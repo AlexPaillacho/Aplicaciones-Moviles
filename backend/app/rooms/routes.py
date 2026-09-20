@@ -10,6 +10,7 @@ from werkzeug.utils import secure_filename
 
 from app import db
 from app.cache import redis_client
+from app.geo import parse_coordinates
 from app.models import AudioSubmission, Room
 from app.tasks import celery_app, process_audio_session
 
@@ -66,10 +67,27 @@ def _room_to_dict(room: Room) -> dict:
 # Nota: GET /rooms/list se deja público (sin JWT).
 # Para la demo del video, el objetivo es comparar N+1 (lazy loading) vs eager loading (joinedload)
 # sin que la autenticación afecte el número de queries en la ruta.
+#
+# Taller Semana 14 (Fase 4): la app puede mandar la ubicación APROXIMADA del
+# usuario (`?lat=..&lng=..`, ya redondeada a ~1 km en el cliente) para una
+# futura ordenación por cercanía. Es opcional: si falta o es inválida se
+# ignora y el listado funciona igual. Por ahora el backend la valida, la
+# registra en el log y la devuelve en `user_location` (para poder
+# comprobar desde Postman/logs que llegó); NO la persiste ni ordena con
+# ella todavía (las salas aún no guardan coordenadas).
 @rooms_bp.route('/rooms/list', methods=['GET'])
 def list_rooms():
     try:
         optimized = request.args.get('optimized', 'false').lower() == 'true'
+
+        user_location = parse_coordinates(
+            request.args.get('lat'), request.args.get('lng')
+        )
+        if user_location:
+            print(
+                "--> [LOCATION] GET /rooms/list con ubicación aproximada: "
+                f"lat={user_location['latitude']} lng={user_location['longitude']}"
+            )
 
         if optimized:
             # Versión CORREGIDA (anti N+1): trae Room + User(host) con JOIN.
@@ -79,13 +97,23 @@ def list_rooms():
                 .all()
             )
             rooms_dict = [_room_to_dict(room) for room in rooms]
-            return jsonify({'source': 'db', 'optimized': True, 'rooms': rooms_dict}), 200
+            return jsonify({
+                'source': 'db',
+                'optimized': True,
+                'user_location': user_location,
+                'rooms': rooms_dict,
+            }), 200
 
         # Versión INEFICIENTE (N+1): Room se consulta primero y luego, al acceder
         # `room.host.username`, SQLAlchemy hace una consulta extra por cada Room.
         rooms = Room.query.filter_by(active=True).all()
         rooms_dict = [_room_to_dict(room) for room in rooms]
-        return jsonify({'source': 'db', 'optimized': False, 'rooms': rooms_dict}), 200
+        return jsonify({
+            'source': 'db',
+            'optimized': False,
+            'user_location': user_location,
+            'rooms': rooms_dict,
+        }), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -134,12 +162,30 @@ def create_room():
 
     host_id = int(get_jwt_identity())
 
+    # Taller Semana 14 (Fase 4): ubicación aproximada opcional del usuario
+    # al crear la sala (`latitude`/`longitude` en el cuerpo). Se valida, se
+    # registra y se devuelve en `user_location`; todavía NO se guarda en la
+    # sala (eso requiere agregar columnas a `rooms`, pendiente para la
+    # ordenación por cercanía).
+    user_location = parse_coordinates(
+        payload.get('latitude'), payload.get('longitude')
+    )
+    if user_location:
+        print(
+            "--> [LOCATION] POST /rooms con ubicación aproximada: "
+            f"lat={user_location['latitude']} lng={user_location['longitude']}"
+        )
+
     room = Room(name=name, active=True, host_id=host_id)
     db.session.add(room)
     db.session.commit()
 
     room = Room.query.options(joinedload(Room.host)).filter_by(id=room.id).first()
-    return jsonify({'created': True, 'room': _room_to_dict(room)}), 201
+    return jsonify({
+        'created': True,
+        'room': _room_to_dict(room),
+        'user_location': user_location,
+    }), 201
 
 
 @rooms_bp.route('/rooms/<room_id>/process-audio', methods=['POST'])
