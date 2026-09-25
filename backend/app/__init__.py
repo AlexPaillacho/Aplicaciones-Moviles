@@ -110,5 +110,30 @@ def create_app() -> Flask:
     app.register_blueprint(rooms_bp)
     app.register_blueprint(auth_bp)
 
+    # Fase 2 (Plan de fases pendientes): documentación de APIs con
+    # Swagger/OpenAPI. `openapi.yaml` vive en la raíz de `backend/` (junto
+    # a `run.py`, no dentro de `app/static/`) para que sea fácil de
+    # encontrar y editar; esta ruta lo sirve puntualmente en
+    # `/static/openapi.yaml` (SIN exponer el resto de `backend/` como
+    # estático, que tendría `.env`/`instance/` con la DB). La UI de
+    # Swagger queda montada en `/apidocs`.
+    from flask import send_from_directory
+    from flask_swagger_ui import get_swaggerui_blueprint
+
+    _BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    @app.route('/static/openapi.yaml')
+    def openapi_spec():
+        return send_from_directory(
+            _BACKEND_ROOT, 'openapi.yaml', mimetype='application/yaml'
+        )
+
+    SWAGGER_URL = '/apidocs'
+    API_URL = '/static/openapi.yaml'
+    swagger_bp = get_swaggerui_blueprint(
+        SWAGGER_URL, API_URL, config={'app_name': 'Speak English API'}
+    )
+    app.register_blueprint(swagger_bp, url_prefix=SWAGGER_URL)
+
     return app
 
