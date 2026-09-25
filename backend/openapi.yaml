@@ -1,0 +1,465 @@
+openapi: 3.0.3
+info:
+  title: Speak English API
+  description: >
+    API REST del proyecto Speak English (Flask + SQLAlchemy + JWT + Celery/Redis).
+    Documenta los 12 endpoints activos: autenticación (4) y salas/audio (8).
+  version: "1.0.0"
+servers:
+  - url: http://127.0.0.1:5000
+    description: Desarrollo local
+
+tags:
+  - name: auth
+    description: Registro, login y sesión (JWT)
+  - name: rooms
+    description: Salas, envíos de audio y tareas asíncronas
+
+paths:
+  /auth/register:
+    post:
+      tags: [auth]
+      summary: Registrar un usuario nuevo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email, password]
+              properties:
+                username: { type: string, example: "juan" }
+                email: { type: string, format: email, example: "juan@example.com" }
+                password: { type: string, format: password, example: "clave123" }
+      responses:
+        '201':
+          description: Usuario creado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  registered: { type: boolean, example: true }
+                  user:
+                    type: object
+                    properties:
+                      id: { type: integer, example: 1 }
+                      email: { type: string, example: "juan@example.com" }
+        '409':
+          description: El email ya está registrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: Faltan campos requeridos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Iniciar sesión
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: Login exitoso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  refresh_token: { type: string }
+        '401':
+          description: Credenciales inválidas
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: Faltan campos requeridos
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: Renovar el access_token
+      description: >
+        Requiere el `refresh_token` (no el `access_token`) en el header
+        `Authorization: Bearer <refresh_token>`.
+      security:
+        - refreshTokenAuth: []
+      responses:
+        '200':
+          description: Nuevo access_token emitido
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+        '401':
+          description: Refresh token inválido o ausente
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Usuario autenticado
+      description: Resultado cacheado en Redis (TTL corto) para reducir consultas repetidas.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Datos del usuario autenticado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: '#/components/schemas/UserMin' }
+        '401':
+          description: Token ausente, inválido o usuario no encontrado
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /rooms/list:
+    get:
+      tags: [rooms]
+      summary: Listado paginado de salas activas
+      description: >
+        Público (sin JWT). Soporta comparar N+1 (lazy loading) vs eager
+        loading (`joinedload`) vía `optimized`, y recibe opcionalmente la
+        ubicación aproximada del usuario (`lat`/`lng`) para una futura
+        ordenación por cercanía.
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+          description: Página a pedir (1-indexada).
+        - in: query
+          name: per_page
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+          description: Tamaño de página (tope 50).
+        - in: query
+          name: optimized
+          schema: { type: boolean, default: false }
+          description: "`true` usa `joinedload(Room.host)` (evita N+1)."
+        - in: query
+          name: lat
+          schema: { type: number, format: float }
+          description: Latitud aproximada del usuario (opcional).
+        - in: query
+          name: lng
+          schema: { type: number, format: float }
+          description: Longitud aproximada del usuario (opcional).
+      responses:
+        '200':
+          description: Página de salas activas
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source: { type: string, example: "db" }
+                  optimized: { type: boolean }
+                  user_location:
+                    nullable: true
+                    $ref: '#/components/schemas/UserLocation'
+                  page: { type: integer, example: 1 }
+                  per_page: { type: integer, example: 10 }
+                  total: { type: integer, example: 23 }
+                  total_pages: { type: integer, example: 3 }
+                  rooms:
+                    type: array
+                    items: { $ref: '#/components/schemas/Room' }
+
+  /rooms/{room_id}:
+    get:
+      tags: [rooms]
+      summary: Detalle de una sala (cache-aside con Redis)
+      parameters:
+        - $ref: '#/components/parameters/RoomId'
+      responses:
+        '200':
+          description: Sala encontrada (desde caché o DB)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source: { type: string, enum: [cache, db] }
+                  room: { $ref: '#/components/schemas/Room' }
+        '404':
+          description: Sala no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    put:
+      tags: [rooms]
+      summary: Editar una sala (con detección de conflictos)
+      description: >
+        Si se envía `expected_updated_at` y el servidor tiene una versión más
+        reciente (la sala cambió mientras el cliente estaba offline), responde
+        409 y no aplica los cambios.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RoomId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                active: { type: boolean }
+                expected_updated_at:
+                  type: string
+                  format: date-time
+                  description: "`updated_at` que tenía el cliente al encolar la edición."
+      responses:
+        '200':
+          description: Sala actualizada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated: { type: boolean, example: true }
+                  room: { $ref: '#/components/schemas/Room' }
+        '404':
+          description: Sala no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Conflicto — la sala cambió en el servidor mientras tanto
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, example: "conflict" }
+                  message: { type: string }
+                  room: { $ref: '#/components/schemas/Room' }
+    delete:
+      tags: [rooms]
+      summary: Eliminar una sala
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RoomId'
+      responses:
+        '200':
+          description: Sala eliminada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted: { type: boolean, example: true }
+                  room:
+                    type: object
+                    properties:
+                      id: { type: integer }
+                      name: { type: string }
+                      active: { type: boolean }
+                      host_id: { type: integer }
+        '404':
+          description: Sala no encontrada
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /rooms:
+    post:
+      tags: [rooms]
+      summary: Crear una sala
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, example: "Sala de práctica 1" }
+                latitude: { type: number, format: float }
+                longitude: { type: number, format: float }
+      responses:
+        '201':
+          description: Sala creada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  created: { type: boolean, example: true }
+                  room: { $ref: '#/components/schemas/Room' }
+                  user_location:
+                    nullable: true
+                    $ref: '#/components/schemas/UserLocation'
+        '422':
+          description: Falta el nombre de la sala
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /rooms/{room_id}/process-audio:
+    post:
+      tags: [rooms]
+      summary: Subir un audio y disparar su procesamiento asíncrono (Celery)
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RoomId'
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                audio:
+                  type: string
+                  format: binary
+      responses:
+        '202':
+          description: Tarea encolada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: "Audio processing started" }
+                  task_id: { type: string }
+                  saved_file: { type: string, nullable: true }
+                  submission_id: { type: integer }
+
+  /rooms/{room_id}/submissions:
+    get:
+      tags: [rooms]
+      summary: Historial persistido de envíos de audio de una sala
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RoomId'
+      responses:
+        '200':
+          description: Envíos de audio de la sala
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  room_id: { type: integer }
+                  submissions:
+                    type: array
+                    items: { $ref: '#/components/schemas/AudioSubmission' }
+
+  /tasks/{task_id}:
+    get:
+      tags: [rooms]
+      summary: Estado de una tarea Celery de procesamiento de audio
+      description: Sincroniza de forma perezosa el estado hacia `AudioSubmission`.
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: task_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Estado de la tarea
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id: { type: string }
+                  state: { type: string, enum: [PENDING, STARTED, SUCCESS, FAILURE] }
+                  result: { type: object, nullable: true }
+                  error: { type: string, nullable: true }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "access_token obtenido en /auth/login."
+    refreshTokenAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "refresh_token obtenido en /auth/login (no el access_token)."
+
+  parameters:
+    RoomId:
+      in: path
+      name: room_id
+      required: true
+      schema: { type: integer }
+      description: Id de la sala.
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+
+    UserMin:
+      type: object
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        email: { type: string }
+
+    UserLocation:
+      type: object
+      properties:
+        latitude: { type: number, format: float }
+        longitude: { type: number, format: float }
+
+    RoomHost:
+      type: object
+      properties:
+        id: { type: integer, nullable: true }
+        username: { type: string, nullable: true }
+
+    Room:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        active: { type: boolean }
+        updated_at: { type: string, format: date-time }
+        host: { $ref: '#/components/schemas/RoomHost' }
+
+    AudioSubmission:
+      type: object
+      properties:
+        id: { type: integer }
+        room_id: { type: integer }
+        user_id: { type: integer }
+        task_id: { type: string }
+        status: { type: string, enum: [PENDING, STARTED, SUCCESS, FAILURE] }
+        result: { type: object, nullable: true }
+        created_at: { type: string, format: date-time }
