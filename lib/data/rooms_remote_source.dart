@@ -15,6 +15,28 @@ class RoomException implements Exception {
   String toString() => message;
 }
 
+/// Resultado de `GET /rooms/list` con metadatos de paginación (Fase 1
+/// del Plan de fases pendientes): además de las salas de esta página,
+/// trae lo necesario para saber si hay una página siguiente
+/// (`page < totalPages`).
+class RoomsPage {
+  const RoomsPage({
+    required this.rooms,
+    required this.page,
+    required this.perPage,
+    required this.total,
+    required this.totalPages,
+  });
+
+  final List<Room> rooms;
+  final int page;
+  final int perPage;
+  final int total;
+  final int totalPages;
+
+  bool get hasMore => page < totalPages;
+}
+
 /// Se lanza cuando `PUT /rooms/<id>` responde 409: la sala cambió en el
 /// servidor mientras la edición estaba encolada offline. Trae la versión
 /// vigente del servidor para que quien la capture (`RoomsRepository`)
@@ -51,7 +73,26 @@ class RoomsRemoteSource {
     bool optimized = true,
     UserLocation? location,
   }) async {
-    final query = <String, String>{'optimized': optimized.toString()};
+    return (await listRoomsPage(optimized: optimized, location: location)).rooms;
+  }
+
+  /// `GET /rooms/list?page=..&per_page=..` (público, sin JWT).
+  ///
+  /// Fase 1 (Plan de fases pendientes): igual que [listRooms], pero
+  /// devuelve además los metadatos de paginación (`total`,
+  /// `totalPages`) que el backend calcula, para que `RoomsRepository`
+  /// sepa si hay una página siguiente que pedir ("cargar más").
+  Future<RoomsPage> listRoomsPage({
+    bool optimized = true,
+    UserLocation? location,
+    int page = 1,
+    int perPage = 10,
+  }) async {
+    final query = <String, String>{
+      'optimized': optimized.toString(),
+      'page': page.toString(),
+      'per_page': perPage.toString(),
+    };
     if (location != null) {
       query['lat'] = location.latitude.toString();
       query['lng'] = location.longitude.toString();
@@ -67,8 +108,20 @@ class RoomsRemoteSource {
     }
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final rooms = data['rooms'] as List<dynamic>;
-    return rooms.map((r) => Room.fromJson(r as Map<String, dynamic>)).toList();
+    final rooms = (data['rooms'] as List<dynamic>)
+        .map((r) => Room.fromJson(r as Map<String, dynamic>))
+        .toList();
+
+    // El backend siempre manda page/per_page/total/total_pages desde la
+    // Fase 1, pero se leen con valores por defecto tolerantes por si
+    // alguna vez se apunta contra una versión vieja del backend.
+    return RoomsPage(
+      rooms: rooms,
+      page: data['page'] as int? ?? page,
+      perPage: data['per_page'] as int? ?? perPage,
+      total: data['total'] as int? ?? rooms.length,
+      totalPages: data['total_pages'] as int? ?? 1,
+    );
   }
 
   /// `GET /rooms/<id>` (público).
