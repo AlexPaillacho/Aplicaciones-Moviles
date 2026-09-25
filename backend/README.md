@@ -61,6 +61,15 @@ cd backend && celery -A app.tasks worker --loglevel=info
 cd backend && python -c "from app import create_app; app=create_app(); app.run(host='0.0.0.0', port=5000, debug=True)"
 ```
 
+## Documentación de la API (Swagger/OpenAPI)
+Fase 2 (Plan de fases pendientes): la especificación vive en `backend/openapi.yaml` (12 endpoints: 4 de auth + 8 de rooms/audio).
+
+Con el backend corriendo, abre:
+```
+http://127.0.0.1:5000/apidocs
+```
+Sirve el spec crudo en `http://127.0.0.1:5000/static/openapi.yaml` (útil para importarlo en Postman/Insomnia como alternativa a `postman_collection.json`).
+
 ## Probar la API
 Usa Postman con la colección incluida:
 - `backend/postman_collection.json`
@@ -68,6 +77,7 @@ Usa Postman con la colección incluida:
 Notas para la demo:
 - `GET /rooms/list?optimized=false` muestra el patrón N+1 (lazy loading de `Room.host`).
 - `GET /rooms/list?optimized=true` usa `joinedload(Room.host)` y reduce consultas.
+- `GET /rooms/list?page=2&per_page=5` (Fase 1): pagina el listado; la respuesta incluye `page`, `per_page`, `total`, `total_pages`.
 - `GET /rooms/<id>` muestra cache miss/hit con Redis.
 - `PUT /rooms/<id>` invalida la clave correspondiente en Redis.
 - `POST /rooms/<id>/process-audio` requiere JWT.
