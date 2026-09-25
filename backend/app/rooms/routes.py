@@ -75,10 +75,28 @@ def _room_to_dict(room: Room) -> dict:
 # registra en el log y la devuelve en `user_location` (para poder
 # comprobar desde Postman/logs que llegó); NO la persiste ni ordena con
 # ella todavía (las salas aún no guardan coordenadas).
+#
+# Fase 1 (Plan de fases pendientes): paginación. `page`/`per_page` son
+# opcionales (por defecto page=1, per_page=10, tal como pedía el plan);
+# `per_page` tiene un tope de 50 para que un cliente no pueda pedir el
+# listado completo de un golpe y anular el propósito de paginar. Se
+# ordena explícitamente por `id` para que la paginación sea estable
+# (offset/limit sin ORDER BY no garantiza el mismo orden entre páginas).
 @rooms_bp.route('/rooms/list', methods=['GET'])
 def list_rooms():
     try:
         optimized = request.args.get('optimized', 'false').lower() == 'true'
+
+        try:
+            page = int(request.args.get('page', 1))
+        except (TypeError, ValueError):
+            page = 1
+        try:
+            per_page = int(request.args.get('per_page', 10))
+        except (TypeError, ValueError):
+            per_page = 10
+        page = max(page, 1)
+        per_page = min(max(per_page, 1), 50)  # tope para evitar abuso
 
         user_location = parse_coordinates(
             request.args.get('lat'), request.args.get('lng')
@@ -89,30 +107,32 @@ def list_rooms():
                 f"lat={user_location['latitude']} lng={user_location['longitude']}"
             )
 
+        query = Room.query.filter_by(active=True)
         if optimized:
             # Versión CORREGIDA (anti N+1): trae Room + User(host) con JOIN.
-            rooms = (
-                Room.query.options(joinedload(Room.host))
-                .filter_by(active=True)
-                .all()
-            )
-            rooms_dict = [_room_to_dict(room) for room in rooms]
-            return jsonify({
-                'source': 'db',
-                'optimized': True,
-                'user_location': user_location,
-                'rooms': rooms_dict,
-            }), 200
+            query = query.options(joinedload(Room.host))
+        # Versión INEFICIENTE (N+1, optimized=False): al acceder luego
+        # `room.host.username` en `_room_to_dict`, SQLAlchemy hace una
+        # consulta extra por cada Room de la página.
 
-        # Versión INEFICIENTE (N+1): Room se consulta primero y luego, al acceder
-        # `room.host.username`, SQLAlchemy hace una consulta extra por cada Room.
-        rooms = Room.query.filter_by(active=True).all()
-        rooms_dict = [_room_to_dict(room) for room in rooms]
+        total = query.order_by(None).count()
+        rooms = (
+            query.order_by(Room.id.asc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+            .all()
+        )
+        total_pages = (total + per_page - 1) // per_page if total else 0
+
         return jsonify({
             'source': 'db',
-            'optimized': False,
+            'optimized': optimized,
             'user_location': user_location,
-            'rooms': rooms_dict,
+            'page': page,
+            'per_page': per_page,
+            'total': total,
+            'total_pages': total_pages,
+            'rooms': [_room_to_dict(r) for r in rooms],
         }), 200
 
     except Exception as e:
