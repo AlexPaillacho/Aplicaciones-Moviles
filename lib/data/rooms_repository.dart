@@ -91,6 +91,19 @@ class RoomsRepository {
 
   bool _isSyncing = false;
 
+  // ===== Paginación (Fase 1, Plan de fases pendientes) =====
+
+  /// Tamaño de página para `GET /rooms/list`, tal como lo pide el plan.
+  static const int roomsPerPage = 10;
+
+  int _currentPage = 1;
+  bool _hasMorePages = false;
+
+  /// `true` si el backend reportó más páginas de las ya cargadas.
+  /// `RoomsProvider` lo usa para decidir si muestra el botón
+  /// "Cargar más".
+  bool get hasMoreRooms => _hasMorePages;
+
   // ===== Lecturas (siempre desde caché) =====
 
   Future<List<Room>> getCachedRooms() => _local.getCachedRooms();
@@ -159,8 +172,12 @@ class RoomsRepository {
       // Fase 4: si hay ubicación aproximada guardada, viaja con la
       // petición (opcional; sin ella el listado funciona igual).
       final location = await _sendableLocation();
-      final serverRooms = await _listRoomsWithRetry(location);
-      await _local.upsertServerRooms(serverRooms);
+      // Fase 1: un refresh siempre vuelve a partir de la primera página;
+      // "cargar más" (loadMoreRooms) es lo que avanza desde acá.
+      final page = await _listRoomsWithRetry(location, page: 1);
+      _currentPage = page.page;
+      _hasMorePages = page.hasMore;
+      await _local.upsertServerRooms(page.rooms);
       await _local.setLastSyncedAt(DateTime.now());
       return const RoomsRefreshOutcome();
     } on UnauthorizedException {
@@ -190,13 +207,45 @@ class RoomsRepository {
   /// deja la decisión al llamador (`refresh()` cae a la caché + botón
   /// manual). No se reintenta ante [NoConnectionException]: sin ninguna
   /// interfaz de red activa, reintentar de inmediato no cambia nada.
-  Future<List<Room>> _listRoomsWithRetry(UserLocation? location) async {
+  Future<RoomsPage> _listRoomsWithRetry(UserLocation? location, {required int page}) async {
     try {
-      return await _remote.listRooms(location: location);
+      return await _remote.listRoomsPage(
+        location: location,
+        page: page,
+        perPage: roomsPerPage,
+      );
     } on RequestTimeoutException {
-      return _remote.listRooms(location: location);
+      return _remote.listRoomsPage(location: location, page: page, perPage: roomsPerPage);
     } on ServerUnavailableException {
-      return _remote.listRooms(location: location);
+      return _remote.listRoomsPage(location: location, page: page, perPage: roomsPerPage);
+    }
+  }
+
+  /// Pide la página siguiente ("cargar más") y la agrega a la caché
+  /// local sin tocar lo ya cacheado (Fase 1, Plan de fases pendientes).
+  /// No aplica el offline-first completo de `refresh()` a propósito: si
+  /// no hay conexión, simplemente no avanza y se lo informa al llamador
+  /// vía [RoomsRefreshOutcome.isOffline], igual que `refresh()`.
+  Future<RoomsRefreshOutcome> loadMoreRooms() async {
+    if (!_hasMorePages) return const RoomsRefreshOutcome();
+
+    try {
+      final location = await _sendableLocation();
+      final page = await _listRoomsWithRetry(location, page: _currentPage + 1);
+      _currentPage = page.page;
+      _hasMorePages = page.hasMore;
+      await _local.upsertServerRooms(page.rooms);
+      return const RoomsRefreshOutcome();
+    } on UnauthorizedException {
+      return const RoomsRefreshOutcome();
+    } on NoConnectionException {
+      return const RoomsRefreshOutcome(isOffline: true);
+    } on NetworkException catch (e) {
+      return RoomsRefreshOutcome(errorMessage: e.message);
+    } on RoomException catch (e) {
+      return RoomsRefreshOutcome(errorMessage: e.message);
+    } catch (_) {
+      return const RoomsRefreshOutcome(errorMessage: 'Ocurrió un error inesperado');
     }
   }
 
