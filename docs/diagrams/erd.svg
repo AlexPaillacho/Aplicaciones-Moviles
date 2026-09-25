@@ -1,0 +1,68 @@
+<svg viewBox="0 0 980 620" xmlns="http://www.w3.org/2000/svg" font-family="Consolas, 'Courier New', monospace">
+  <defs>
+    <marker id="crow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10" fill="none" stroke="#37474F" stroke-width="1.4"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="620" fill="#FFFFFF"/>
+  <text x="20" y="30" font-size="18" font-weight="bold" fill="#1A237E">ERD — Speak English (3 tablas, 3FN)</text>
+
+  <!-- ===== users ===== -->
+  <g>
+    <rect x="40" y="70" width="300" height="182" rx="6" fill="#FFFFFF" stroke="#1A237E" stroke-width="1.6"/>
+    <rect x="40" y="70" width="300" height="34" rx="6" fill="#1A237E"/>
+    <text x="190" y="93" text-anchor="middle" font-size="15" font-weight="bold" fill="#FFFFFF">users</text>
+
+    <text x="55" y="126" font-size="13" fill="#1A237E" font-weight="bold">PK  id</text>
+    <text x="55" y="150" font-size="13" fill="#263238">    username</text>
+    <text x="55" y="174" font-size="13" fill="#263238">    email        UNIQUE · IDX</text>
+    <text x="55" y="198" font-size="13" fill="#263238">    password_hash</text>
+    <text x="55" y="222" font-size="13" fill="#263238">    created_at</text>
+  </g>
+
+  <!-- ===== rooms ===== -->
+  <g>
+    <rect x="620" y="70" width="320" height="230" rx="6" fill="#FFFFFF" stroke="#00695C" stroke-width="1.6"/>
+    <rect x="620" y="70" width="320" height="34" rx="6" fill="#00695C"/>
+    <text x="780" y="93" text-anchor="middle" font-size="15" font-weight="bold" fill="#FFFFFF">rooms</text>
+
+    <text x="635" y="126" font-size="13" fill="#00695C" font-weight="bold">PK  id</text>
+    <text x="635" y="150" font-size="13" fill="#263238">    name</text>
+    <text x="635" y="174" font-size="13" fill="#263238">    active           IDX</text>
+    <text x="635" y="198" font-size="13" fill="#B71C1C" font-weight="bold">FK  host_id  → users.id</text>
+    <text x="635" y="222" font-size="13" fill="#263238">    created_at</text>
+    <text x="635" y="246" font-size="13" fill="#263238">    updated_at       (control de concurrencia</text>
+    <text x="668" y="266" font-size="13" fill="#263238">optimista, ver PUT /rooms/&lt;id&gt;)</text>
+  </g>
+
+  <!-- ===== audio_submissions ===== -->
+  <g>
+    <rect x="300" y="400" width="380" height="206" rx="6" fill="#FFFFFF" stroke="#5D4037" stroke-width="1.6"/>
+    <rect x="300" y="400" width="380" height="34" rx="6" fill="#5D4037"/>
+    <text x="490" y="423" text-anchor="middle" font-size="15" font-weight="bold" fill="#FFFFFF">audio_submissions</text>
+
+    <text x="315" y="456" font-size="13" fill="#5D4037" font-weight="bold">PK  id</text>
+    <text x="315" y="480" font-size="13" fill="#B71C1C" font-weight="bold">FK  room_id  → rooms.id      IDX</text>
+    <text x="315" y="504" font-size="13" fill="#B71C1C" font-weight="bold">FK  user_id  → users.id      IDX</text>
+    <text x="315" y="528" font-size="13" fill="#263238">    task_id              IDX</text>
+    <text x="315" y="552" font-size="13" fill="#263238">    saved_filename</text>
+    <text x="315" y="576" font-size="13" fill="#263238">    status               IDX</text>
+    <text x="315" y="600" font-size="13" fill="#263238">    result_json · created_at (IDX) · updated_at</text>
+  </g>
+
+  <!-- ===== relaciones ===== -->
+  <!-- users -> rooms (host_id), 1..N -->
+  <path d="M 340 130 C 480 110, 520 130, 620 155" fill="none" stroke="#37474F" stroke-width="1.4" marker-end="url(#crow)"/>
+  <text x="460" y="105" font-size="12" fill="#37474F">1 users → N rooms (host_id)</text>
+
+  <!-- users -> audio_submissions (user_id), 1..N -->
+  <path d="M 190 252 C 190 340, 320 380, 380 400" fill="none" stroke="#37474F" stroke-width="1.4" marker-end="url(#crow)"/>
+  <text x="195" y="345" font-size="12" fill="#37474F">1 users → N audio_submissions (user_id)</text>
+
+  <!-- rooms -> audio_submissions (room_id), 1..N -->
+  <path d="M 780 300 C 780 380, 650 400, 600 405" fill="none" stroke="#37474F" stroke-width="1.4" marker-end="url(#crow)"/>
+  <text x="640" y="350" font-size="12" fill="#37474F">1 rooms → N audio_submissions (room_id)</text>
+
+  <text x="20" y="618" font-size="11.5" fill="#546454">Integridad referencial vía FKs reales · índices en las columnas por las que se filtra (active, email, task_id, status, created_at)</text>
+</svg>

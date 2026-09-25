@@ -1,0 +1,67 @@
+<svg viewBox="0 0 1000 460" xmlns="http://www.w3.org/2000/svg" font-family="Consolas, 'Courier New', monospace">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#37474F"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1000" height="460" fill="#FFFFFF"/>
+  <text x="20" y="30" font-size="18" font-weight="bold" fill="#1A237E">Arquitectura — App ↔ API ↔ DB (con Redis y Celery)</text>
+
+  <!-- App (Flutter) -->
+  <rect x="30" y="150" width="200" height="110" rx="8" fill="#E3F2FD" stroke="#1565C0" stroke-width="1.8"/>
+  <text x="130" y="185" text-anchor="middle" font-size="15" font-weight="bold" fill="#0D47A1">App (Flutter)</text>
+  <text x="130" y="208" text-anchor="middle" font-size="11.5" fill="#0D47A1">screens/ · state/ (Provider)</text>
+  <text x="130" y="224" text-anchor="middle" font-size="11.5" fill="#0D47A1">data/ (repositorio)</text>
+  <text x="130" y="240" text-anchor="middle" font-size="11.5" fill="#0D47A1">SQLite local (offline-first)</text>
+
+  <!-- API (Flask) -->
+  <rect x="400" y="150" width="220" height="110" rx="8" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.8"/>
+  <text x="510" y="185" text-anchor="middle" font-size="15" font-weight="bold" fill="#1B5E20">API REST (Flask)</text>
+  <text x="510" y="208" text-anchor="middle" font-size="11.5" fill="#1B5E20">blueprints: auth · rooms</text>
+  <text x="510" y="224" text-anchor="middle" font-size="11.5" fill="#1B5E20">JWT (Flask-JWT-Extended)</text>
+  <text x="510" y="240" text-anchor="middle" font-size="11.5" fill="#1B5E20">SQLAlchemy ORM</text>
+
+  <!-- DB -->
+  <rect x="800" y="150" width="180" height="110" rx="8" fill="#FFF3E0" stroke="#E65100" stroke-width="1.8"/>
+  <text x="890" y="185" text-anchor="middle" font-size="15" font-weight="bold" fill="#BF360C">Base de datos</text>
+  <text x="890" y="208" text-anchor="middle" font-size="11.5" fill="#BF360C">SQLite (dev)</text>
+  <text x="890" y="224" text-anchor="middle" font-size="11.5" fill="#BF360C">PostgreSQL (prod)</text>
+  <text x="890" y="240" text-anchor="middle" font-size="11.5" fill="#BF360C">users · rooms · audio_submissions</text>
+
+  <!-- Redis -->
+  <rect x="440" y="330" width="150" height="90" rx="8" fill="#FFEBEE" stroke="#C62828" stroke-width="1.8"/>
+  <text x="515" y="362" text-anchor="middle" font-size="14" font-weight="bold" fill="#B71C1C">Redis</text>
+  <text x="515" y="382" text-anchor="middle" font-size="11" fill="#B71C1C">cache-aside (TTL)</text>
+  <text x="515" y="398" text-anchor="middle" font-size="11" fill="#B71C1C">broker de Celery</text>
+
+  <!-- Celery worker -->
+  <rect x="760" y="330" width="180" height="90" rx="8" fill="#F3E5F5" stroke="#6A1B9A" stroke-width="1.8"/>
+  <text x="850" y="362" text-anchor="middle" font-size="14" font-weight="bold" fill="#4A148C">Worker Celery</text>
+  <text x="850" y="382" text-anchor="middle" font-size="11" fill="#4A148C">process_audio_session</text>
+  <text x="850" y="398" text-anchor="middle" font-size="11" fill="#4A148C">(procesamiento asíncrono)</text>
+
+  <!-- App <-> API -->
+  <line x1="230" y1="205" x2="400" y2="205" stroke="#37474F" stroke-width="1.8" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="245" y="197" font-size="11" fill="#37474F">HTTP/JSON (REST)</text>
+
+  <!-- API <-> DB -->
+  <line x1="620" y1="205" x2="800" y2="205" stroke="#37474F" stroke-width="1.8" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="635" y="197" font-size="11" fill="#37474F">SQLAlchemy</text>
+
+  <!-- API <-> Redis -->
+  <line x1="510" y1="260" x2="515" y2="330" stroke="#37474F" stroke-width="1.8" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="522" y="298" font-size="11" fill="#37474F">GET/SETEX ·</text>
+  <text x="522" y="312" font-size="11" fill="#37474F">enqueue tarea</text>
+
+  <!-- Redis <-> Celery -->
+  <line x1="590" y1="375" x2="760" y2="375" stroke="#37474F" stroke-width="1.8" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="605" y="367" font-size="11" fill="#37474F">broker/backend</text>
+
+  <!-- Celery -> DB (persistencia de AudioSubmission vía GET /tasks/<id>) -->
+  <path d="M 890 330 C 890 300, 890 260, 890 260" fill="none" stroke="#37474F" stroke-width="1.8" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+  <text x="898" y="300" font-size="10.5" fill="#37474F">sync perezosa</text>
+  <text x="898" y="313" font-size="10.5" fill="#37474F">(GET /tasks/&lt;id&gt;)</text>
+
+  <text x="20" y="450" font-size="11.5" fill="#546454">GET /rooms/list público (sin JWT) · resto de rutas de rooms y todo /auth protegido o validado por JWT donde aplica</text>
+</svg>
