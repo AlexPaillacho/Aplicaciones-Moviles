@@ -24,6 +24,7 @@ class RoomsProvider extends ChangeNotifier {
   DateTime? _lastSyncedAt;
   int _pendingCount = 0;
   String? _lastSyncError;
+  bool _isLoadingMore = false;
 
   List<Room> get rooms => _rooms;
   bool get isLoading => _isLoading;
@@ -31,6 +32,16 @@ class RoomsProvider extends ChangeNotifier {
   bool get isOffline => _isOffline;
   DateTime? get lastSyncedAt => _lastSyncedAt;
   int get pendingCount => _pendingCount;
+
+  /// Fase 1 (Plan de fases pendientes): `true` mientras se pide la
+  /// página siguiente con [loadMore]; la UI la usa para mostrar un
+  /// loader en el botón "Cargar más" en vez de bloquear toda la
+  /// pantalla.
+  bool get isLoadingMore => _isLoadingMore;
+
+  /// `true` si el backend reportó que hay más salas que las ya
+  /// cargadas (hay página siguiente).
+  bool get hasMore => _repository.hasMoreRooms;
 
   /// Mensaje del backend (ej. 422) para la última operación de creación
   /// o edición que se rechazó al sincronizar. La UI lo lee una sola vez
@@ -91,6 +102,25 @@ class RoomsProvider extends ChangeNotifier {
     notifyListeners();
 
     await trySyncPending();
+  }
+
+  /// Fase 1 (Plan de fases pendientes): pide la página siguiente de
+  /// salas y la agrega al final de [rooms] (no reemplaza lo ya
+  /// mostrado). No hace nada si ya se está cargando o si el backend ya
+  /// dijo que no hay más páginas ([hasMore] en `false`).
+  Future<void> loadMore() async {
+    if (_isLoadingMore || !hasMore) return;
+
+    _isLoadingMore = true;
+    notifyListeners();
+
+    final outcome = await _repository.loadMoreRooms();
+    if (outcome.errorMessage != null) _lastSyncError = outcome.errorMessage;
+
+    await _reloadFromRepository();
+
+    _isLoadingMore = false;
+    notifyListeners();
   }
 
   /// Taller Semana 14 (Fase 4): registra la ubicación aproximada del
