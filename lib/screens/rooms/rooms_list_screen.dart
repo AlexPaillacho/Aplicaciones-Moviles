@@ -494,10 +494,26 @@ class _RoomsListScreenState extends State<RoomsListScreen>
                   isEmpty: rooms.rooms.isEmpty,
                   emptyMessage: 'Todavía no hay salas. Crea la primera.',
                   builder: (context) => ListView.separated(
-                    itemCount: rooms.rooms.length,
+                    // Fase 1 (Plan de fases pendientes): un ítem extra al
+                    // final de la lista para "Cargar más", solo cuando el
+                    // backend reportó que hay página siguiente.
+                    itemCount: rooms.rooms.length + (rooms.hasMore ? 1 : 0),
                     separatorBuilder: (_, _) =>
                         const SizedBox(height: AppTokens.spaceSM),
                     itemBuilder: (context, index) {
+                      if (index == rooms.rooms.length) {
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(
+                            vertical: AppTokens.spaceSM,
+                          ),
+                          child: AppButton(
+                            label: 'Cargar más',
+                            icon: Icons.expand_more,
+                            loading: rooms.isLoadingMore,
+                            onPressed: rooms.loadMore,
+                          ),
+                        );
+                      }
                       final room = rooms.rooms[index];
                       final isHost = room.hostId == auth.currentUser?.id;
                       return AppCard(
