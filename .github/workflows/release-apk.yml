@@ -1,0 +1,111 @@
+# Genera el APK de Speak English automáticamente cuando se publica un
+# Release en GitHub y lo adjunta al propio Release (el APK queda listo para
+# descargar e instalar en el celular). También se puede lanzar a mano desde
+# la pestaña Actions -> "Release APK" -> Run workflow.
+#
+# Más detalles y pasos en BUILD_APK.md.
+name: Release APK
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # necesario para adjuntar el APK al Release
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.5'
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      # Solo los ERRORES de análisis detienen el build (los avisos/lints
+      # informativos no deben impedir generar el APK).
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - run: flutter test
+
+      # Firma OPCIONAL. Si existe el secret KEYSTORE_BASE64 se firma con tu
+      # propio keystore; si no, android/app/build.gradle.kts usa la firma
+      # de debug y el APK se instala igual en cualquier celular.
+      - name: Configurar firma (opcional)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "Sin KEYSTORE_BASE64: el APK se firmará con la clave de debug."
+            exit 0
+          fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+          cat > android/key.properties <<EOT
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=$RUNNER_TEMP/upload.jks
+          EOT
+
+      # Tag v1.2.0 -> versionName 1.2.0. versionCode = número de ejecución
+      # (siempre creciente). En ejecución manual se usa la versión del pubspec.
+      - name: Versión
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            TAG="v$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//')-manual"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "name=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      # URL del backend dentro del APK. Por defecto la IP de tu PC en la red
+      # local (la que ya usa la app); para cambiarla sin tocar el código
+      # crea la variable de repositorio API_BASE_URL (Settings -> Secrets
+      # and variables -> Actions -> Variables).
+      - name: Compilar APK
+        run: >
+          flutter build apk --release
+          --dart-define=API_BASE_URL=${{ vars.API_BASE_URL || 'http://192.168.101.24:5000' }}
+          --build-name=${{ steps.version.outputs.name }}
+          --build-number=${{ github.run_number }}
+
+      - name: Renombrar APK
+        id: out
+        run: |
+          APK="speak-english-${{ steps.version.outputs.tag }}.apk"
+          mv build/app/outputs/flutter-apk/app-release.apk "$APK"
+          echo "apk=$APK" >> "$GITHUB_OUTPUT"
+
+      # Descargable desde la ejecución del workflow (pestaña Actions).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: ${{ steps.out.outputs.apk }}
+
+      - name: Adjuntar al Release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release upload "${{ steps.version.outputs.tag }}"
+          "${{ steps.out.outputs.apk }}" --clobber
+
+      - name: Limpiar firma
+        if: always()
+        run: rm -f android/key.properties "$RUNNER_TEMP/upload.jks"
