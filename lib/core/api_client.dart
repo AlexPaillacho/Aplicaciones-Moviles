@@ -96,6 +96,6 @@ class ApiClient {
     if (kIsWeb) {
       return 'http://localhost:5000';
     }
-    return 'http://192.168.1.16:5000'; // IP de la PC de desarrollo en la red Wi-Fi local
+    return 'http://192.168.101.24:5000'; // IP de la PC de desarrollo en la red Wi-Fi local
   }
 }

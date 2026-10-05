@@ -211,11 +211,29 @@ void main() {
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         expect(body['name'], 'Sala renombrada');
         expect(body['active'], false);
-        return http.Response('', 200);
+        // El backend responde con la sala actualizada; `updateRoom` la
+        // decodifica, así que el doble de prueba debe devolver un JSON
+        // válido (antes devolvía un cuerpo vacío y fallaba al decodificar).
+        return http.Response(
+          jsonEncode({
+            'updated': true,
+            'room': {
+              'id': 3,
+              'name': 'Sala renombrada',
+              'active': false,
+              'updated_at': '2026-10-04T12:00:00Z',
+              'host': {'id': 1, 'username': 'alex'},
+            },
+          }),
+          200,
+        );
       });
 
-      await buildService(client, token: 'token-abc')
+      final room = await buildService(client, token: 'token-abc')
           .updateRoom(3, name: 'Sala renombrada', active: false);
+      expect(room.id, 3);
+      expect(room.name, 'Sala renombrada');
+      expect(room.active, false);
     });
 
     test('deleteRoom exitoso (DELETE /rooms/<id>)', () async {
