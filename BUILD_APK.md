@@ -46,7 +46,11 @@ Con **Actions → Release APK → Run workflow** puedes generarlo sin crear un R
 
 ## Dirección del backend dentro del APK
 
+<<<<<<< HEAD
 Por defecto el APK apunta a `http://192.168.1.16:5000` (la IP de tu PC en el wifi),
+=======
+Por defecto el APK apunta a `http://192.168.101.24:5000` (la IP de tu PC en el wifi),
+>>>>>>> 441e3df4079ae09a8bd0dcbb64073aefcc0b32f1
 que es la única dirección HTTP permitida en `android/.../network_security_config.xml`.
 Por eso el celular debe estar en el mismo wifi que tu PC con Flask corriendo.
 
