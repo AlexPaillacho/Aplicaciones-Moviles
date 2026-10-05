@@ -40,6 +40,7 @@ class _AppState extends State<App> {
   final _roomsProvider = RoomsProvider();
   final _connectivityService = ConnectivityService();
   StreamSubscription<bool>? _connectivitySub;
+  Timer? _retryTimer;
 
   @override
   void initState() {
@@ -56,14 +57,31 @@ class _AppState extends State<App> {
 
     // Al recuperar conexión, procesa la cola de operaciones pendientes
     // sin que el usuario tenga que hacer pull-to-refresh manualmente.
-    _connectivitySub = _connectivityService.onConnectivityRestored.listen((_) {
-      _roomsProvider.trySyncPending();
+    //
+    // Al activar el modo avión pasa a modo local al instante; al
+    // quitarlo, `syncAfterReconnect` reintenta solo (con espera) hasta
+    // que el wifi esté realmente listo, sin mostrar el error de "no se
+    // pudo conectar con el servidor".
+    _connectivitySub = _connectivityService.onStatusChanged.listen((online) {
+      if (online) {
+        _roomsProvider.syncAfterReconnect();
+      } else {
+        _roomsProvider.markOffline();
+      }
     });
+
+    // Red de seguridad: si alguna señal de reconexión se pierde, cada
+    // 10 s se reintenta mientras haya cambios pendientes.
+    _retryTimer = Timer.periodic(
+      const Duration(seconds: 10),
+      (_) => _roomsProvider.retryIfNeeded(),
+    );
   }
 
   @override
   void dispose() {
     _connectivitySub?.cancel();
+    _retryTimer?.cancel();
     super.dispose();
   }
 
@@ -77,6 +95,7 @@ class _AppState extends State<App> {
       child: MaterialApp(
         navigatorKey: navigatorKey,
         title: 'Speak English',
+        debugShowCheckedModeBanner: false,
         theme: AppTheme.light(),
         home: const AuthGate(),
         routes: {

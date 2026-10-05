@@ -1,10 +1,13 @@
+import logging
 import os
+import secrets
 from datetime import timedelta
 
-from flask import Flask
+from flask import Flask, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager
 from flask_cors import CORS
+from flask_swagger_ui import get_swaggerui_blueprint
 from dotenv import load_dotenv
 
 # Instancias globales (patrón recomendado para extensiones Flask)
@@ -13,42 +16,73 @@ from dotenv import load_dotenv
 db = SQLAlchemy()
 jwt = JWTManager()
 
+BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SWAGGER_URL = '/apidocs'
+OPENAPI_URL = '/static/openapi.yaml'
 
-_DEV_JWT_SECRET_KEY = 'dev-secret-key-please-change-me-in-production-32chars-1234567890-abcdef'
+
+logger = logging.getLogger(__name__)
 
 
 def _load_jwt_secret_key() -> str:
-    """Resuelve `JWT_SECRET_KEY`.
+    """Resuelve `JWT_SECRET_KEY` desde el entorno (o `backend/.env`).
 
-    Taller Semana 13 (Bloque 8, verificación de seguridad): en
-    desarrollo (`APP_ENV` distinto de `prod`) se acepta el valor de
-    ejemplo de abajo para no obligar a nadie a configurar un `.env` solo
-    para levantar el proyecto localmente. En producción (`APP_ENV=prod`)
-    ese valor de ejemplo ya no se acepta — si no se definió
-    `JWT_SECRET_KEY` por variable de entorno, la app falla al arrancar
-    en vez de firmar tokens con una clave que cualquiera puede leer en
-    este mismo archivo (mismo criterio que `ApiClient.resolveBaseUrl()`
-    en el cliente Flutter, que tampoco arranca en producción sin
-    `API_BASE_URL` explícito).
+    - Producción (`APP_ENV=prod`): es obligatoria; si falta, la app no
+      arranca en vez de firmar tokens con una clave improvisada.
+    - Desarrollo: si no está definida se genera una clave aleatoria para
+      este proceso (nunca hay una clave escrita en el código). Los tokens
+      dejan de valer al reiniciar el servidor; para conservar la sesión
+      entre reinicios define `JWT_SECRET_KEY` en `backend/.env`.
     """
     configured = os.getenv('JWT_SECRET_KEY')
-    app_env = os.getenv('APP_ENV', 'dev')
-
-    if app_env == 'prod':
-        if not configured:
-            raise RuntimeError(
-                'Falta JWT_SECRET_KEY en el entorno para el build de producción '
-                '(APP_ENV=prod). No se usa la clave de ejemplo de desarrollo.'
-            )
+    if configured:
         return configured
 
-    return configured or _DEV_JWT_SECRET_KEY
+    if os.getenv('APP_ENV', 'dev') == 'prod':
+        raise RuntimeError(
+            'Falta JWT_SECRET_KEY en el entorno para el build de producción '
+            '(APP_ENV=prod).'
+        )
+
+    logger.warning(
+        'JWT_SECRET_KEY no está definida: se usa una clave temporal que se '
+        'pierde al reiniciar el servidor. Defínela en backend/.env.'
+    )
+    return secrets.token_urlsafe(48)
 
 
 def _load_database_url() -> str:
     """Resuelve DATABASE_URL o usa SQLite para desarrollo local."""
     # DATABASE_URL es configurable para pasar a Postgres en un entorno real.
     return os.getenv('DATABASE_URL', 'sqlite:///dev.db')
+
+
+def _ensure_schema_upgrades(app: Flask) -> None:
+    """Agrega columnas nuevas a tablas que ya existen en `dev.db`.
+
+    `db.create_all()` solo crea tablas faltantes, no agrega columnas. Para
+    que quien ya tiene una base de datos no tenga que borrarla ni correr
+    una migración a mano, al arrancar se agrega (si falta)
+    `audio_submissions.duration_seconds`. Si la tabla aún no existe no
+    hace nada: `create_all()` la creará ya con la columna.
+    """
+    from sqlalchemy import inspect, text
+
+    try:
+        with app.app_context():
+            inspector = inspect(db.engine)
+            if 'audio_submissions' not in inspector.get_table_names():
+                return
+            columns = [c['name'] for c in inspector.get_columns('audio_submissions')]
+            if 'duration_seconds' in columns:
+                return
+            with db.engine.begin() as conn:
+                conn.execute(text(
+                    'ALTER TABLE audio_submissions ADD COLUMN duration_seconds INTEGER'
+                ))
+            logger.info("Columna 'duration_seconds' agregada a audio_submissions")
+    except Exception:  # noqa: BLE001 - no debe impedir que arranque el servidor
+        logger.warning('No se pudo actualizar el esquema', exc_info=True)
 
 
 def create_app() -> Flask:
@@ -60,6 +94,10 @@ def create_app() -> Flask:
     """
     # Carga variables desde .env si existe (para desarrollo local)
     load_dotenv()
+    logging.basicConfig(
+        level=os.getenv('LOG_LEVEL', 'INFO'),
+        format='%(levelname)s %(name)s: %(message)s',
+    )
 
     app = Flask(__name__)
 
@@ -110,6 +148,8 @@ def create_app() -> Flask:
     app.register_blueprint(rooms_bp)
     app.register_blueprint(auth_bp)
 
+    _ensure_schema_upgrades(app)
+
     # Fase 2 (Plan de fases pendientes): documentación de APIs con
     # Swagger/OpenAPI. `openapi.yaml` vive en la raíz de `backend/` (junto
     # a `run.py`, no dentro de `app/static/`) para que sea fácil de
@@ -117,21 +157,14 @@ def create_app() -> Flask:
     # `/static/openapi.yaml` (SIN exponer el resto de `backend/` como
     # estático, que tendría `.env`/`instance/` con la DB). La UI de
     # Swagger queda montada en `/apidocs`.
-    from flask import send_from_directory
-    from flask_swagger_ui import get_swaggerui_blueprint
-
-    _BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-    @app.route('/static/openapi.yaml')
+    @app.route(OPENAPI_URL)
     def openapi_spec():
         return send_from_directory(
-            _BACKEND_ROOT, 'openapi.yaml', mimetype='application/yaml'
+            BACKEND_ROOT, 'openapi.yaml', mimetype='application/yaml'
         )
 
-    SWAGGER_URL = '/apidocs'
-    API_URL = '/static/openapi.yaml'
     swagger_bp = get_swaggerui_blueprint(
-        SWAGGER_URL, API_URL, config={'app_name': 'Speak English API'}
+        SWAGGER_URL, OPENAPI_URL, config={'app_name': 'Speak English API'}
     )
     app.register_blueprint(swagger_bp, url_prefix=SWAGGER_URL)
 

@@ -29,10 +29,10 @@ REDIS_DB=0
 
 DATABASE_URL=sqlite:///dev.db
 
-JWT_SECRET_KEY=dev-secret-key-please-change-me-in-production-32chars
+JWT_SECRET_KEY=<clave-larga-y-aleatoria>   # genera una con: python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-> En producción usa siempre una `JWT_SECRET_KEY` segura definida por variable de entorno, nunca el valor de ejemplo de arriba.
+> Si no defines `JWT_SECRET_KEY`, en desarrollo se usa una clave temporal que cambia en cada reinicio del servidor (hay que volver a iniciar sesión). En producción (`APP_ENV=prod`) es obligatoria.
 
 Levanta Redis:
 
@@ -49,7 +49,7 @@ python -c "from app import create_app, db; app=create_app(); app.app_context().p
 Corre el worker de Celery (deja esta terminal abierta):
 
 ```bash
-cd backend && celery -A app.tasks worker --loglevel=info
+cd backend && celery -A app.tasks worker --loglevel=info -P solo
 ```
 
 En otra terminal, corre Flask con `host='0.0.0.0'` para que el emulador Android pueda alcanzarlo:
@@ -92,6 +92,7 @@ LoginScreen ──(¿no tienes cuenta?)──► RegisterScreen ──(registro 
      │ login OK
      ▼
 RoomsListScreen ──(tap en una sala)──► RoomDetailScreen ──(grabar/detener)──► envío de audio
+                                                          └──(Ver historial de envíos)──► SubmissionsScreen
      │                                       │                                     │
      └── crear sala (FAB) ──────────────────┘                    polling a /tasks/<id> hasta
                                                                    SUCCESS/FAILURE, resultado
@@ -100,7 +101,8 @@ RoomsListScreen ──(tap en una sala)──► RoomDetailScreen ──(grabar/
 
 - **LoginScreen** / **RegisterScreen**: autenticación contra `/auth/*`, token guardado con `flutter_secure_storage`.
 - **RoomsListScreen**: lista las salas (`GET /rooms/list`), pull-to-refresh, botón `+` para crear una sala nueva.
-- **RoomDetailScreen**: detalle de la sala, botón "Eliminar" visible solo para el host, botón de grabar/detener (`package:record`) que envía el audio y muestra el resultado del procesamiento.
+- **RoomDetailScreen**: detalle de la sala, botón "Eliminar" visible solo para el host, botón de grabar/detener (`package:record`) que envía el audio y muestra "Audio enviado".
+- **SubmissionsScreen**: historial paginado ("Cargar más") de los audios que el usuario envió a la sala, con su estado (Procesando / Procesado / Falló).
 
 ## Endpoints consumidos
 
@@ -114,8 +116,9 @@ RoomsListScreen ──(tap en una sala)──► RoomDetailScreen ──(grabar/
 | POST | `/rooms` | JWT | Crear sala |
 | PUT | `/rooms/<id>` | JWT | Editar sala |
 | DELETE | `/rooms/<id>` | JWT | Eliminar sala (solo el host) |
-| POST | `/rooms/<id>/process-audio` | JWT | Sube el audio grabado (multipart, campo `audio`) y dispara la tarea Celery. Responde `202` con `task_id` |
+| POST | `/rooms/<id>/process-audio` | JWT | Sube el audio grabado (multipart, campo `audio`) y dispara la tarea Celery. Responde `202` con `task_id`; `422` si el audio falta o está vacío |
 | GET | `/tasks/<task_id>` | JWT | Estado de la tarea Celery (`PENDING`/`SUCCESS`/`FAILURE` + `result`) |
+| GET | `/rooms/<id>/submissions` | JWT | Historial paginado (`page`, `per_page`) de los audios que el usuario envió a la sala, del más reciente al más antiguo |
 
 ## Pruebas
 

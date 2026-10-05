@@ -271,6 +271,57 @@ void main() {
       expect(data['saved_file'], 'room_4_123_audio.m4a');
     });
 
+    test('listSubmissions pide la página y devuelve el historial paginado',
+        () async {
+      final client = MockClient((request) async {
+        expect(request.method, 'GET');
+        expect(request.url.path, '/rooms/4/submissions');
+        expect(request.url.queryParameters['page'], '2');
+        expect(request.url.queryParameters['per_page'], '5');
+        expect(request.headers['Authorization'], 'Bearer token-abc');
+        return http.Response(
+          jsonEncode({
+            'room_id': 4,
+            'page': 2,
+            'per_page': 5,
+            'total': 7,
+            'total_pages': 2,
+            'submissions': [
+              {
+                'id': 3,
+                'room_id': 4,
+                'user_id': 1,
+                'task_id': 'task-3',
+                'status': 'SUCCESS',
+                'result': null,
+                'created_at': '2026-10-01T15:30:00Z',
+              },
+            ],
+          }),
+          200,
+        );
+      });
+
+      final page = await buildService(client, token: 'token-abc')
+          .listSubmissions(4, page: 2, perPage: 5);
+
+      expect(page.submissions, hasLength(1));
+      expect(page.submissions.first.taskId, 'task-3');
+      expect(page.total, 7);
+      expect(page.hasMore, isFalse);
+    });
+
+    test('listSubmissions lanza RoomException si la sala no existe', () async {
+      final client = MockClient((request) async {
+        return http.Response(jsonEncode({'error': 'Room not found'}), 404);
+      });
+
+      expect(
+        () => buildService(client, token: 'token-abc').listSubmissions(99),
+        throwsA(isA<RoomException>()),
+      );
+    });
+
     test('getTaskStatus retorna el estado de la tarea (GET /tasks/<id>)', () async {
       final client = MockClient((request) async {
         expect(request.url.path, '/tasks/task-1');

@@ -34,7 +34,20 @@ class ApiClient {
   /// Instancia única de `http.Client`. Todo el tráfico HTTP de
   /// producción pasa por acá (los tests siguen pudiendo inyectar su
   /// propio `MockClient` a través de `ApiService(client: ...)`).
-  final http.Client httpClient = http.Client();
+  http.Client _httpClient = http.Client();
+
+  http.Client get httpClient => _httpClient;
+
+  /// Cierra el cliente y crea uno nuevo, descartando las conexiones
+  /// persistentes del pool. Se usa al recuperar la red (ej. al quitar el
+  /// modo avión): los sockets abiertos ANTES del corte quedan muertos y
+  /// pueden seguir fallando con "no se pudo conectar" aunque el wifi ya
+  /// esté activo.
+  void resetConnections() {
+    final old = _httpClient;
+    _httpClient = http.Client();
+    old.close();
+  }
 
   /// Timeout explícito aplicado a cada petición (Bloque 2).
   static const Duration requestTimeout = Duration(seconds: 15);
@@ -83,6 +96,6 @@ class ApiClient {
     if (kIsWeb) {
       return 'http://localhost:5000';
     }
-    return 'http://10.0.2.2:5000'; // emulador Android -> localhost del host
+    return 'http://192.168.1.16:5000'; // IP de la PC de desarrollo en la red Wi-Fi local
   }
 }

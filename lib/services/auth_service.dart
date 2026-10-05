@@ -14,6 +14,17 @@ class AuthException implements Exception {
   String toString() => message;
 }
 
+/// Mensaje único para un correo que no cumple la regla de Gmail
+/// (el backend responde exactamente lo mismo con 422).
+const String gmailErrorMessage =
+    'Datos incorrectos: el correo debe terminar en @gmail.com';
+
+final RegExp _gmailRegExp = RegExp(r'^[a-z0-9._%+\-]+@gmail\.com$');
+
+/// `true` si [email] es una dirección `algo@gmail.com`.
+bool isValidGmail(String email) =>
+    _gmailRegExp.hasMatch(email.trim().toLowerCase());
+
 /// Servicio de autenticación contra el backend Flask.
 class AuthService {
   AuthService({ApiService? apiService, TokenStorage? tokenStorage})
@@ -26,9 +37,13 @@ class AuthService {
   /// `POST /auth/register`. Lanza `AuthException` con el mensaje del
   /// backend si falla (ej. email ya registrado -> 409).
   Future<void> register(String username, String email, String password) async {
+    // Misma regla que el backend: así el mensaje sale al instante y
+    // sin depender del servidor.
+    if (!isValidGmail(email)) throw const AuthException(gmailErrorMessage);
+
     final response = await _apiService.post('/auth/register', body: {
       'username': username,
-      'email': email,
+      'email': email.trim().toLowerCase(),
       'password': password,
     });
 
@@ -86,10 +101,16 @@ class AuthService {
 
   String _extractError(String responseBody) {
     try {
-      final data = jsonDecode(responseBody) as Map<String, dynamic>;
-      return data['error'] as String? ?? 'Error desconocido';
+      final data = jsonDecode(responseBody);
+      if (data is Map<String, dynamic>) {
+        for (final key in const ['error', 'message', 'msg', 'detail']) {
+          final value = data[key];
+          if (value is String && value.trim().isNotEmpty) return value;
+        }
+      }
     } catch (_) {
-      return 'Error desconocido';
+      // cuerpo vacío o no-JSON: cae al mensaje genérico
     }
+    return 'Datos incorrectos. Revisa la información e intenta de nuevo.';
   }
 }

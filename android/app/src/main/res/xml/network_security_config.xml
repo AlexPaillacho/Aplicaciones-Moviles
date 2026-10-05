@@ -14,6 +14,7 @@
         <!-- 10.0.2.2 es la dirección con la que el emulador de Android
              alcanza el localhost de la máquina host. -->
         <domain includeSubdomains="false">10.0.2.2</domain>
+         <domain includeSubdomains="false">192.168.101.24</domain>
 
         <!-- Si probás en un dispositivo físico conectado a la misma red
              Wi-Fi que tu backend, descomentá esta línea y reemplazá la IP

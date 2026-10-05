@@ -29,6 +29,13 @@ class ConnectivityService {
         .where((isOnline) => isOnline);
   }
 
+  /// Emite `true`/`false` en cada cambio de conectividad (hay / no hay
+  /// ninguna interfaz de red). Sirve para pasar a modo local en el
+  /// instante en que se activa el modo avión.
+  Stream<bool> get onStatusChanged {
+    return _connectivity.onConnectivityChanged.map(_hasConnection).distinct();
+  }
+
   bool _hasConnection(List<ConnectivityResult> results) {
     return results.any((r) => r != ConnectivityResult.none);
   }

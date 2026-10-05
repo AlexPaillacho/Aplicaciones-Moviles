@@ -20,14 +20,12 @@ REDIS_DB=0
 
 DATABASE_URL=sqlite:///dev.db
 
-JWT_SECRET_KEY=dev-secret-key-please-change-me-in-production-32chars
+JWT_SECRET_KEY=<clave-larga-y-aleatoria>   # genera una con: python -c "import secrets; print(secrets.token_urlsafe(48))"
 
-# Nota: en producción usa SIEMPRE una clave segura y definida por variable de entorno (nunca el valor por defecto).
+# Si no la defines, en desarrollo se usa una clave temporal (los tokens dejan
+# de valer al reiniciar el servidor). En producción es obligatoria.
 
-# Taller Semana 13 (Bloque 8): en APP_ENV=prod, JWT_SECRET_KEY es
-# obligatoria — la app no arranca sin ella (no acepta el valor de
-# ejemplo de arriba). En dev (valor por defecto) sí se acepta, para no
-# forzar un .env solo para levantar el proyecto localmente.
+# En APP_ENV=prod, JWT_SECRET_KEY es obligatoria: la app no arranca sin ella.
 APP_ENV=dev
 
 # Taller Semana 13: TTL del access token y del refresh token.
@@ -53,7 +51,7 @@ python -c "from app import create_app, db; app=create_app(); app.app_context().p
 
 ## Correr Celery worker
 ```bash
-cd backend && celery -A app.tasks worker --loglevel=info
+cd backend && celery -A app.tasks worker --loglevel=info -P solo
 ```
 
 ## Correr Flask

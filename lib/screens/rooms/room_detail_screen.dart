@@ -1,4 +1,5 @@
-import 'dart:io';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/tokens.dart';
@@ -11,9 +12,10 @@ import '../../state/auth_provider.dart';
 import '../../state/rooms_provider.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
-import '../../widgets/app_text_field.dart';
 import '../../widgets/permission_ui.dart';
+import '../../widgets/room_form_dialog.dart';
 import '../../widgets/status_view.dart';
+import 'submissions_screen.dart';
 
 /// Taller Semana 12: el detalle ahora lee la sala desde el
 /// `RoomsProvider` (caché local + cola offline), no directamente del
@@ -63,9 +65,12 @@ class _RoomDetailScreenState extends State<RoomDetailScreen>
 
   bool _isRecording = false;
   bool _isUploading = false;
-  bool _isProcessing = false;
   String? _audioStatusMessage;
-  Map<String, dynamic>? _taskResult;
+
+  /// true cuando el backend GUARDÓ el audio (respondió 202). Es
+  /// independiente de si el procesamiento posterior (Celery) termina bien:
+  /// el audio ya está guardado y aparece en el historial.
+  bool _audioSent = false;
 
   @override
   void initState() {
@@ -142,8 +147,15 @@ class _RoomDetailScreenState extends State<RoomDetailScreen>
 
   Future<void> _openAppSettings() => _permissionService.openSettings();
 
-  Room? _findRoom(BuildContext context) {
-    final rooms = context.watch<RoomsProvider>().rooms;
+  /// [listen] debe ser `true` SOLO dentro de `build` (para redibujar al
+  /// cambiar la sala). En callbacks (ej. al abrir el historial) se usa
+  /// `read`: llamar a `context.watch` fuera de `build` lanza "Tried to
+  /// listen to a value exposed with provider, from outside of the widget
+  /// tree" y el botón no hacía nada.
+  Room? _findRoom(BuildContext context, {bool listen = false}) {
+    final rooms = listen
+        ? context.watch<RoomsProvider>().rooms
+        : context.read<RoomsProvider>().rooms;
     for (final r in rooms) {
       if (r.id == widget.roomId) return r;
     }
@@ -166,59 +178,31 @@ class _RoomDetailScreenState extends State<RoomDetailScreen>
   }
 
   Future<void> _showEditDialog(Room room) async {
-    final controller = TextEditingController(text: room.name);
-    var active = room.active;
-
-    final result = await showDialog<bool>(
+    final result = await showDialog<RoomFormResult>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Editar sala'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              AppTextField(controller: controller, label: 'Nombre de la sala'),
-              const SizedBox(height: AppTokens.spaceMD),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Activa'),
-                value: active,
-                onChanged: (v) => setDialogState(() => active = v),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('Guardar'),
-            ),
-          ],
-        ),
+      builder: (_) => RoomFormDialog(
+        title: 'Editar sala',
+        confirmLabel: 'Guardar',
+        initialName: room.name,
+        initialActive: room.active,
       ),
     );
+    if (result == null || !mounted) return;
 
-    if (result == true && mounted) {
-      final name = controller.text.trim();
-      // Si estamos sin conexión, esto queda encolado y se aplica de
-      // inmediato en la caché (optimista); se sincroniza solo al
-      // reconectar.
-      await context.read<RoomsProvider>().update(
-            room,
-            name: name.isEmpty ? null : name,
-            active: active,
-          );
-    }
+    // Si estamos sin conexión, esto queda encolado y se aplica de
+    // inmediato en la caché (optimista); se sincroniza solo al
+    // reconectar.
+    await context.read<RoomsProvider>().update(
+          room,
+          name: result.name.isEmpty ? null : result.name,
+          active: result.active,
+        );
   }
 
   Future<void> _startRecording() async {
     setState(() {
       _audioStatusMessage = null;
-      _taskResult = null;
+      _audioSent = false;
     });
 
     // Explicación ANTES del diálogo del sistema, y solo si el permiso
@@ -258,12 +242,41 @@ class _RoomDetailScreenState extends State<RoomDetailScreen>
     }
   }
 
+  void _openSubmissions() {
+    final room = _findRoom(context);
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SubmissionsScreen(
+          roomId: widget.roomId,
+          roomName: room?.name ?? 'Sala',
+        ),
+      ),
+    );
+  }
+
   Future<void> _stopAndSend() async {
     setState(() => _isRecording = false);
 
-    final File? audioFile = await _recorderService.stop();
-    if (audioFile == null) {
+    final RecordedAudio? recording;
+    try {
+      recording = await _recorderService.stop();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _audioStatusMessage = 'No se pudo detener la grabación: $e');
+      return;
+    }
+    if (!mounted) return;
+
+    if (recording == null) {
       setState(() => _audioStatusMessage = 'No se grabó ningún audio.');
+      return;
+    }
+
+    // Un audio vacío, demasiado corto o sin sonido no se envía: llegaría
+    // al backend como un archivo que "suena" a nada.
+    final problem = recording.problem;
+    if (problem != null) {
+      setState(() => _audioStatusMessage = problem);
       return;
     }
 
@@ -273,61 +286,61 @@ class _RoomDetailScreenState extends State<RoomDetailScreen>
     });
 
     try {
-      final response = await _roomsService.processAudio(widget.roomId, audioFile);
-      final taskId = response['task_id'] as String;
+      final response =
+          await _roomsService.processAudio(
+        widget.roomId,
+        recording.file,
+        durationSeconds: recording.duration.inSeconds,
+      );
+      final taskId = response['task_id'] as String?;
+      final queueFailed = response['processing_status'] == 'FAILURE';
+      if (!mounted) return;
       setState(() {
         _isUploading = false;
-        _isProcessing = true;
-        _audioStatusMessage = 'Procesando (task_id: $taskId)...';
+        _audioStatusMessage = null;
+        _audioSent = true;
       });
-      await _pollTaskStatus(taskId);
+      // El procesamiento sigue en segundo plano: se consulta sin mostrar
+      // estados intermedios al usuario (solo se avisa si falla).
+      if (!queueFailed && taskId != null) unawaited(_pollTaskStatus(taskId));
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isUploading = false;
-        _isProcessing = false;
-        _audioStatusMessage = 'Error al enviar el audio: $e';
+        _audioStatusMessage = e is NetworkException
+            ? 'No se pudo enviar el audio: ${e.message}'
+            : 'Error al enviar el audio: $e';
       });
     }
   }
 
+  /// Consulta el estado de la tarea de Celery hasta que termine. Cada
+  /// consulta también sincroniza el resultado hacia la base de datos (ver
+  /// `GET /tasks/<id>` en el backend). No muestra nada si todo va bien;
+  /// solo avisa si el procesamiento falla.
   Future<void> _pollTaskStatus(String taskId) async {
     const maxAttempts = 10;
-    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      await Future.delayed(const Duration(seconds: 2));
+    const interval = Duration(seconds: 2);
+
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      await Future<void>.delayed(interval);
       if (!mounted) return;
 
       try {
         final status = await _roomsService.getTaskStatus(taskId);
         final state = status['state'] as String?;
+        if (!mounted) return;
 
-        if (state == 'SUCCESS') {
-          setState(() {
-            _isProcessing = false;
-            _taskResult = status['result'] as Map<String, dynamic>?;
-            _audioStatusMessage = 'Procesamiento completado.';
-          });
-          return;
-        }
+        if (state == 'SUCCESS') return;
         if (state == 'FAILURE') {
-          setState(() {
-            _isProcessing = false;
-            _audioStatusMessage = 'El procesamiento falló: ${status['error']}';
-          });
+          // El audio SÍ quedó guardado: el fallo del procesamiento en
+          // segundo plano no se muestra al usuario.
           return;
         }
-        setState(() => _audioStatusMessage = 'Procesando... ($state)');
-      } catch (e) {
-        setState(() {
-          _isProcessing = false;
-          _audioStatusMessage = 'Error consultando el estado: $e';
-        });
-        return;
+      } catch (_) {
+        // Un fallo de red al consultar no invalida el envío: se reintenta.
       }
     }
-    setState(() {
-      _isProcessing = false;
-      _audioStatusMessage = 'Tiempo de espera agotado consultando el resultado.';
-    });
   }
 
   /// Aviso del micrófono según el estado del permiso. Sin bloqueo no
@@ -367,7 +380,7 @@ class _RoomDetailScreenState extends State<RoomDetailScreen>
     }
   }
 
-  Widget _buildAudioSection() {
+  Widget _buildAudioSection({bool roomPending = false}) {
     // Si el micrófono está bloqueado, "Grabar" se deshabilita. Mientras
     // se graba siempre se puede detener.
     final micBlocked = _micBlockedStatus != null && !_isRecording;
@@ -381,14 +394,22 @@ class _RoomDetailScreenState extends State<RoomDetailScreen>
           AppButton(
             label: _isRecording ? 'Detener y enviar' : 'Grabar',
             icon: _isRecording ? Icons.stop : Icons.mic,
-            loading: _isUploading || _isProcessing,
-            onPressed: micBlocked
+            loading: _isUploading,
+            onPressed: (micBlocked || roomPending)
                 ? null
                 : (_isRecording ? _stopAndSend : _startRecording),
             variant: _isRecording
                 ? AppButtonVariant.destructive
                 : AppButtonVariant.primary,
           ),
+          if (roomPending) ...[
+            const SizedBox(height: AppTokens.spaceMD),
+            Text(
+              'Esta sala aún no se ha sincronizado con el servidor. '
+              'Cuando haya conexión podrás grabar y ver el historial.',
+              style: AppTokens.textCaption,
+            ),
+          ],
           if (micBlocked) ...[
             const SizedBox(height: AppTokens.spaceMD),
             _buildMicNotice(),
@@ -397,7 +418,14 @@ class _RoomDetailScreenState extends State<RoomDetailScreen>
             const SizedBox(height: AppTokens.spaceMD),
             Text(_audioStatusMessage!, style: AppTokens.textBody),
           ],
-          if (_taskResult != null) ...[
+          const SizedBox(height: AppTokens.spaceSM),
+          AppButton(
+            label: 'Ver historial de envíos',
+            icon: Icons.history,
+            variant: AppButtonVariant.secondary,
+            onPressed: roomPending ? null : _openSubmissions,
+          ),
+          if (_audioSent) ...[
             const SizedBox(height: AppTokens.spaceSM),
             Container(
               width: double.infinity,
@@ -406,11 +434,12 @@ class _RoomDetailScreenState extends State<RoomDetailScreen>
                 color: AppTokens.colorSuccessContainer,
                 borderRadius: BorderRadius.circular(AppTokens.radiusCard),
               ),
-              child: Text(
-                'Resultado: $_taskResult',
-                style: const TextStyle(color: AppTokens.colorOnSuccessContainer),
+              child: const Text(
+                'Audio guardado correctamente. Puedes verlo en el historial.',
+                style: TextStyle(color: AppTokens.colorOnSuccessContainer),
               ),
             ),
+
           ],
         ],
       ),
@@ -420,7 +449,7 @@ class _RoomDetailScreenState extends State<RoomDetailScreen>
   @override
   Widget build(BuildContext context) {
     final currentUser = context.watch<AuthProvider>().currentUser;
-    final room = _findRoom(context);
+    final room = _findRoom(context, listen: true);
     final isHost = room != null && room.hostId == currentUser?.id;
     final roomsLoading = context.watch<RoomsProvider>().isLoading;
 
@@ -482,7 +511,7 @@ class _RoomDetailScreenState extends State<RoomDetailScreen>
                   ),
                 ),
                 const SizedBox(height: AppTokens.spaceMD),
-                _buildAudioSection(),
+                _buildAudioSection(roomPending: room.id < 0),
               ],
             ),
           ),

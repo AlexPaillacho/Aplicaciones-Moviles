@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:geolocator/geolocator.dart';
 
 import 'permission_service.dart';
@@ -44,7 +46,7 @@ class LocationService {
   ///
   /// Lanza [LocationPermissionException] si el permiso no está
   /// concedido, o [LocationServiceDisabledException] si el GPS del
-  /// sistema está apagado. Si no se obtiene posición en 15 s lanza
+  /// sistema está apagado. Si no se obtiene posición (2 intentos de 8 s) lanza
   /// `TimeoutException`.
   Future<Position> getCurrentPosition() async {
     var status = await _permissionService.checkLocation();
@@ -65,16 +67,37 @@ class LocationService {
       throw const LocationServiceDisabledException();
     }
 
-    // timeLimit (Fase 3): sin él, si no hay fix (ej. en interiores) la
-    // llamada podría quedar esperando indefinidamente y la UI mostraría
-    // el spinner para siempre. Al vencer lanza `TimeoutException`, que
-    // la pantalla trata como un error reintentable.
-    return Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.low,
-        timeLimit: Duration(seconds: 15),
-      ),
-    );
+    // Rapidez: para "salas cercanas" basta una posición aproximada, así
+    // que primero se usa la ÚLTIMA posición conocida del sistema (llega al
+    // instante). Esperar siempre un fix nuevo en modo "low" era lo que
+    // hacía que a veces tardara varios intentos en cargar.
+    try {
+      final lastKnown = await Geolocator.getLastKnownPosition();
+      if (lastKnown != null) return lastKnown;
+    } catch (_) {
+      // No disponible en esta plataforma/dispositivo: se pide un fix nuevo.
+    }
+
+    // Sin posición previa: fix nuevo con dos intentos cortos (el primero
+    // suele "despertar" al proveedor de ubicación y el segundo ya
+    // responde) en vez de uno largo que termina en "intenta nuevamente".
+    // Sin timeLimit la llamada podría esperar indefinidamente (ej. en
+    // interiores); al vencer ambos lanza `TimeoutException`, que la
+    // pantalla trata como un error reintentable.
+    const attempts = 2;
+    for (var i = 1; i <= attempts; i++) {
+      try {
+        return await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.low,
+            timeLimit: Duration(seconds: 8),
+          ),
+        );
+      } on TimeoutException {
+        if (i == attempts) rethrow;
+      }
+    }
+    throw TimeoutException('No se obtuvo la posición');
   }
 
   /// Atajo para la UI: solo dice si vale la pena mostrar la sección de

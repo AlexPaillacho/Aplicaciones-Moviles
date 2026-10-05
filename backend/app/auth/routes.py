@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from functools import wraps
 
 from flask import Blueprint, g, jsonify, request
@@ -11,13 +12,19 @@ from flask_jwt_extended import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from app.cache import redis_client
 from app import db
+from app.cache import redis_client
 from app.models import User
 
-
-
 auth_bp = Blueprint('auth', __name__)
+
+# El registro solo admite cuentas de Gmail (regla de la app).
+EMAIL_ERROR_MESSAGE = 'Datos incorrectos: el correo debe terminar en @gmail.com'
+_GMAIL_RE = re.compile(r'^[a-z0-9._%+\-]+@gmail\.com$')
+
+
+def _normalize_email(value) -> str:
+    return str(value or '').strip().lower()
 
 
 # TTL corto para reducir consultas redundantes en requests consecutivos
@@ -64,7 +71,7 @@ def _get_authenticated_user_one_query():
             # Si el JSON guardado está corrupto, cae a DB
             pass
 
-    user = User.query.get(int(jwt_user_id))  # UNA sola consulta por PK
+    user = db.session.get(User, int(jwt_user_id))  # UNA sola consulta por PK
 
     if not user:
         g.current_user = None
@@ -103,8 +110,8 @@ def jwt_user_required():
 def register():
     payload = request.get_json(silent=True) or {}
 
-    username = payload.get('username')
-    email = payload.get('email')
+    username = (payload.get('username') or '').strip()
+    email = _normalize_email(payload.get('email'))
     password = payload.get('password')
 
     if not username or not email or not password:
@@ -113,6 +120,9 @@ def register():
         # datos que trae. El cliente Flutter distingue esta familia
         # (`ValidationException`) de fallos de conexión/timeout.
         return jsonify({'error': 'username, email y password son requeridos'}), 422
+
+    if not _GMAIL_RE.match(email):
+        return jsonify({'error': EMAIL_ERROR_MESSAGE}), 422
 
     # Evitar duplicados
     existing = User.query.filter_by(email=email).first()
@@ -135,7 +145,7 @@ def register():
 def login():
     payload = request.get_json(silent=True) or {}
 
-    email = payload.get('email')
+    email = _normalize_email(payload.get('email'))
     password = payload.get('password')
 
     if not email or not password:

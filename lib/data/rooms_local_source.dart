@@ -258,12 +258,63 @@ class RoomsLocalSource {
     return db.query('pending_room_ops', orderBy: 'created_at ASC');
   }
 
+  /// Cantidad de operaciones que todavía no llegaron al servidor. Incluye
+  /// las marcadas `failed`: siguen sin sincronizar (se reactivan solas al
+  /// reconectar, ver [reviveFailedOperations]), así que el aviso de la
+  /// pantalla no debe decir que no hay nada pendiente.
   Future<int> countPending() async {
     final db = await _database;
     final result = await db.rawQuery(
-      "SELECT COUNT(*) as c FROM pending_room_ops WHERE status != 'failed'",
+      'SELECT COUNT(*) as c FROM pending_room_ops',
     );
     return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  /// Vuelve a dejar como `pending` (con el contador de intentos en 0) las
+  /// operaciones que se dieron por vencidas. Se llama al recuperar la
+  /// conexión: un fallo transitorio (servidor reiniciándose, wifi a
+  /// medio levantar) no debe dejar un cambio sin sincronizar para
+  /// siempre. Las rechazadas por validación (422) no pasan por acá: se
+  /// descartan al momento.
+  Future<void> reviveFailedOperations() async {
+    final db = await _database;
+    await db.rawUpdate(
+      "UPDATE pending_room_ops SET status = 'pending', attempt_count = 0 "
+      "WHERE status = 'failed'",
+    );
+  }
+
+  /// Funde una edición hecha sobre una sala creada sin conexión (id
+  /// temporal) en la operación de creación pendiente, porque esa sala
+  /// todavía no existe en el servidor y no se puede hacer `PUT` sobre
+  /// ella. Devuelve `false` si ya no hay creación pendiente para ese id.
+  Future<bool> mergeIntoPendingCreate({
+    required int localTempId,
+    String? name,
+    bool? active,
+  }) async {
+    final db = await _database;
+    final changed = await db.rawUpdate(
+      'UPDATE pending_room_ops SET name = COALESCE(?, name), '
+      'active = COALESCE(?, active) '
+      "WHERE op_type = 'create' AND local_temp_id = ?",
+      [name, active == null ? null : (active ? 1 : 0), localTempId],
+    );
+    return changed > 0;
+  }
+
+  /// Tras sincronizar una edición, las siguientes ediciones pendientes de
+  /// la MISMA sala deben partir de la versión que acaba de devolver el
+  /// servidor. Si conservaran la fecha base original (o la hora del
+  /// dispositivo), el servidor las vería como un conflicto con la
+  /// edición que el propio usuario acaba de enviar y las descartaría.
+  Future<void> rebasePendingUpdates(int roomId, String baseUpdatedAt) async {
+    final db = await _database;
+    await db.rawUpdate(
+      'UPDATE pending_room_ops SET base_updated_at = ? '
+      "WHERE op_type = 'update' AND room_id = ?",
+      [baseUpdatedAt, roomId],
+    );
   }
 
   Future<void> deleteOperation(String clientOpId) async {

@@ -13,7 +13,19 @@ import 'rooms_remote_source.dart';
 /// (`isOffline`, `errorMessage`) sin necesitar saber si el fallo vino de
 /// HTTP, del backend, o de ningún lado (éxito).
 class RoomsRefreshOutcome {
-  const RoomsRefreshOutcome({this.isOffline = false, this.errorMessage});
+  const RoomsRefreshOutcome({
+    this.isOffline = false,
+    this.errorMessage,
+    this.serverUnreachable = false,
+  });
+
+  /// El dispositivo tiene red pero el backend no respondió (timeout o
+  /// servidor inalcanzable). Típico justo al quitar el modo avión: la
+  /// interfaz de red ya aparece activa pero el wifi aún no termina de
+  /// conectar. NO es un error para el usuario: `RoomsProvider` lo trata
+  /// como "modo local" y reintenta solo. `errorMessage` lleva el texto
+  /// por si no hay nada en caché que mostrar.
+  final bool serverUnreachable;
 
   /// Sin conexión (o el backend no respondió a tiempo): la UI debe
   /// seguir mostrando la caché y prender el aviso de modo offline.
@@ -31,9 +43,17 @@ class RoomsRefreshOutcome {
 /// un 422, para mostrarle ese mensaje al usuario (`errorMessage`) en vez
 /// de dejarlo solo en el log.
 class RoomsSyncOutcome {
-  const RoomsSyncOutcome({this.syncedAny = false, this.errorMessage});
+  const RoomsSyncOutcome({
+    this.syncedAny = false,
+    this.errorMessage,
+    this.networkFailed = false,
+  });
   final bool syncedAny;
   final String? errorMessage;
+
+  /// La cola se cortó por falta de red / servidor inalcanzable: quedan
+  /// operaciones pendientes que hay que reintentar más tarde.
+  final bool networkFailed;
 }
 
 /// Resultado interno de procesar una operación de la cola.
@@ -103,6 +123,10 @@ class RoomsRepository {
   /// `RoomsProvider` lo usa para decidir si muestra el botón
   /// "Cargar más".
   bool get hasMoreRooms => _hasMorePages;
+
+  /// Descarta las conexiones HTTP abiertas antes del corte de red (ver
+  /// `ApiClient.resetConnections`). Se llama al recuperar la conexión.
+  void resetNetwork() => ApiService.instance.resetConnections();
 
   // ===== Lecturas (siempre desde caché) =====
 
@@ -187,11 +211,10 @@ class RoomsRepository {
     } on NoConnectionException {
       return const RoomsRefreshOutcome(isOffline: true);
     } on NetworkException catch (e) {
-      // Timeout o servidor caído: ya se intentó una vez más en
-      // `_listRoomsWithRetry` y siguió fallando. Se muestra como error
-      // (con botón "Reintentar" manual vía StatusView), a diferencia de
-      // "sin conexión" que es un modo silencioso de solo-caché.
-      return RoomsRefreshOutcome(errorMessage: e.message);
+      // Timeout o servidor inalcanzable: `RoomsProvider` decide si es un
+      // error visible (no hay caché) o solo modo local con reintento
+      // automático (hay caché, ej. al quitar el modo avión).
+      return RoomsRefreshOutcome(errorMessage: e.message, serverUnreachable: true);
     } on RoomException catch (e) {
       return RoomsRefreshOutcome(errorMessage: e.message);
     } catch (_) {
@@ -214,8 +237,6 @@ class RoomsRepository {
         page: page,
         perPage: roomsPerPage,
       );
-    } on RequestTimeoutException {
-      return _remote.listRoomsPage(location: location, page: page, perPage: roomsPerPage);
     } on ServerUnavailableException {
       return _remote.listRoomsPage(location: location, page: page, perPage: roomsPerPage);
     }
@@ -270,7 +291,7 @@ class RoomsRepository {
       host: (hostId != null && hostUsername != null)
           ? RoomHost(id: hostId, username: hostUsername)
           : null,
-      updatedAt: DateTime.now(),
+      updatedAt: DateTime.now().toUtc(),
     );
 
     final location = await _sendableLocation();
@@ -290,21 +311,41 @@ class RoomsRepository {
   /// la base con la que el servidor detectará (o no) un conflicto al
   /// sincronizar.
   Future<void> updateOptimistic(Room room, {String? name, bool? active}) async {
+    // Siempre en UTC: el servidor compara estas fechas como UTC, y una
+    // hora local (ej. UTC-5) hacía que una segunda edición sin conexión
+    // se tomara como "conflicto" y se descartara al sincronizar.
     final optimisticRoom = room.copyWith(
       name: name,
       active: active,
-      updatedAt: DateTime.now(),
+      updatedAt: DateTime.now().toUtc(),
     );
 
     await _local.upsertRoom(optimisticRoom);
+
+    // Sala creada sin conexión que todavía no existe en el servidor (id
+    // temporal negativo): el cambio se funde en la creación pendiente.
+    if (room.id < 0) {
+      await _local.mergeIntoPendingCreate(
+        localTempId: room.id,
+        name: name,
+        active: active,
+      );
+      return;
+    }
+
     await _local.enqueueUpdate(
       clientOpId: _uuid.v4(),
       roomId: room.id,
       name: name,
       active: active,
-      baseUpdatedAt: room.updatedAt.toIso8601String(),
+      baseUpdatedAt: room.updatedAt.toUtc().toIso8601String(),
     );
   }
+
+  /// Reactiva las operaciones que se dieron por vencidas (ver
+  /// `RoomsLocalSource.reviveFailedOperations`). `RoomsProvider` lo llama
+  /// al recuperar la conexión, antes de reintentar la cola.
+  Future<void> reviveFailedOperations() => _local.reviveFailedOperations();
 
   // ===== Sincronización de la cola pendiente (antes SyncService) =====
 
@@ -315,6 +356,7 @@ class RoomsRepository {
     if (_isSyncing) return const RoomsSyncOutcome(); // evita procesar la cola en paralelo
     _isSyncing = true;
     var syncedAny = false;
+    var networkFailed = false;
     String? validationError;
 
     try {
@@ -336,6 +378,7 @@ class RoomsRepository {
           // red, asumimos que el resto tampoco podrá: cortamos acá y
           // esperamos a la próxima reconexión en vez de seguir fallando
           // operación por operación.
+          networkFailed = true;
           break;
         }
       }
@@ -343,32 +386,36 @@ class RoomsRepository {
       _isSyncing = false;
     }
 
-    return RoomsSyncOutcome(syncedAny: syncedAny, errorMessage: validationError);
+    return RoomsSyncOutcome(
+      syncedAny: syncedAny,
+      errorMessage: validationError,
+      networkFailed: networkFailed,
+    );
   }
 
-  /// Intenta [op] hasta [maxAttempts] veces con espera creciente — pero
-  /// SOLO si [op] es idempotente (Bloque 7). Devuelve `false`
-  /// únicamente cuando el motivo fue falta de conexión (para cortar el
-  /// resto de la cola); cualquier otro desenlace —éxito, conflicto
-  /// resuelto, o agotar los intentos permitidos— devuelve `true` porque
-  /// esa operación puntual ya quedó resuelta (sincronizada, resuelta por
-  /// conflicto, o marcada `failed` para reintento manual).
+  /// Procesa [op]. Devuelve `resolved: false` únicamente cuando el motivo
+  /// fue falta de conexión (para cortar el resto de la cola); cualquier
+  /// otro desenlace —éxito, conflicto resuelto, rechazo por validación o
+  /// fallo no transitorio— devuelve `resolved: true` para seguir con la
+  /// próxima operación.
+  ///
+  /// Reintentos (Bloque 7): un `update` (PUT, idempotente) se reintenta
+  /// con espera creciente dentro de la misma pasada; un `create` (POST,
+  /// NO idempotente) recibe un solo intento por pasada para no arriesgar
+  /// una sala duplicada. En ambos casos el contador de intentos se
+  /// guarda en la base: al llegar a [maxAttempts] la operación pasa a
+  /// `failed`, y `reviveFailedOperations` la reactiva al recuperar la
+  /// conexión (antes quedaba `failed` para siempre, sin ninguna forma de
+  /// reintentarla, y el cambio nunca llegaba al servidor).
   Future<_OperationResult> _processOperationWithRetry(Map<String, Object?> op) async {
     final clientOpId = op['client_op_id'] as String;
-
-    // `update` es un PUT con id: reenviarlo no tiene efectos distintos
-    // de enviarlo una sola vez, así que se le da el backoff completo. Un
-    // `create` es un POST no idempotente — el backend no deduplica por
-    // `client_op_id` (ver Bloque 6) — así que solo se le da UN intento
-    // automático; si falla por algo que no sea falta de red, se marca
-    // `failed` de inmediato en vez de reintentarlo solo, para no arriesgar
-    // una sala duplicada.
     final opType = op['op_type'] as String;
-    final attemptsAllowed = opType == 'update' ? maxAttempts : 1;
+    final attemptsThisPass = opType == 'update' ? maxAttempts : 1;
 
-    var attempt = (op['attempt_count'] as int?) ?? 0;
+    var persistedAttempts = (op['attempt_count'] as int?) ?? 0;
+    var triedThisPass = 0;
 
-    while (attempt < attemptsAllowed) {
+    while (triedThisPass < attemptsThisPass) {
       try {
         await _applyOperation(op);
         await _local.deleteOperation(clientOpId);
@@ -384,33 +431,35 @@ class RoomsRepository {
       } on ValidationException catch (e) {
         // 422: el problema es el contenido de la operación (ej. un
         // `name` que el backend rechazó), no algo transitorio.
-        // Reintentar el mismo payload nunca lo arregla.
+        // Reintentar el mismo payload nunca lo arregla, así que la
+        // operación se descarta y se avisa al usuario.
         if (opType == 'create') {
           // La sala optimista (id temporal) nunca fue válida para el
-          // servidor: la sacamos de la caché en vez de dejarla
-          // "fantasma" en la lista, y descartamos la operación (no
-          // tiene sentido reintentar el mismo payload).
+          // servidor: se saca de la caché en vez de dejarla "fantasma".
           final localTempId = op['local_temp_id'] as int?;
           if (localTempId != null) {
             await _local.deleteRoom(localTempId);
           }
-          await _local.deleteOperation(clientOpId);
-        } else {
-          // En un `update` sí conviene dejarla para reintento manual:
-          // la sala original sigue viva, solo falló la edición.
-          await _local.markAttempt(clientOpId, failed: true);
         }
+        // En un `update` la sala original sigue viva: al descartar la
+        // operación, el próximo refresh la realinea con el servidor (si
+        // se dejara en la cola como `failed`, bloquearía para siempre la
+        // actualización de esa sala desde el servidor).
+        await _local.deleteOperation(clientOpId);
         debugPrint('[RoomsRepository] Operación $clientOpId inválida: ${e.message}');
         return _OperationResult(resolved: true, errorMessage: e.message);
-      } catch (_) {
-        attempt += 1;
-        final giveUp = attempt >= attemptsAllowed;
+      } catch (e) {
+        triedThisPass += 1;
+        persistedAttempts += 1;
+        final giveUp = persistedAttempts >= maxAttempts;
         await _local.markAttempt(clientOpId, failed: giveUp);
-        if (giveUp) {
-          return const _OperationResult(resolved: true); // se dio por vencida; sigue la cola
+        debugPrint('[RoomsRepository] Intento $persistedAttempts de '
+            '$clientOpId falló: $e');
+        if (giveUp || triedThisPass >= attemptsThisPass) {
+          return const _OperationResult(resolved: true);
         }
-        final backoff = Duration(seconds: 1 << attempt); // 2s, 4s, 8s, 16s...
-        await Future.delayed(backoff);
+        final backoff = Duration(seconds: 1 << persistedAttempts); // 2s, 4s, 8s...
+        await Future<void>.delayed(backoff);
       }
     }
     return const _OperationResult(resolved: true);
@@ -438,6 +487,23 @@ class RoomsRepository {
 
       final room = await _remote.createRoom(name, location: location);
       await _local.replaceTempRoomId(localTempId, room);
+
+      // Si la sala se desactivó mientras seguía sin sincronizar (edición
+      // fundida en la creación), eso se manda como una edición aparte
+      // ahora que la sala ya existe. Se encola (en vez de un segundo
+      // PUT aquí) para que un corte de red en ese punto no repita el
+      // POST y duplique la sala.
+      if ((op['active'] as int?) == 0) {
+        await _local.upsertRoom(
+          room.copyWith(active: false, updatedAt: DateTime.now().toUtc()),
+        );
+        await _local.enqueueUpdate(
+          clientOpId: _uuid.v4(),
+          roomId: room.id,
+          active: false,
+          baseUpdatedAt: room.updatedAt.toUtc().toIso8601String(),
+        );
+      }
       return;
     }
 
@@ -453,6 +519,12 @@ class RoomsRepository {
         expectedUpdatedAt: baseUpdatedAt,
       );
       await _local.upsertRoom(room);
+      // Las ediciones siguientes de esta sala parten de la versión que
+      // acaba de confirmar el servidor (evita falsos conflictos).
+      await _local.rebasePendingUpdates(
+        room.id,
+        room.updatedAt.toUtc().toIso8601String(),
+      );
       return;
     }
 

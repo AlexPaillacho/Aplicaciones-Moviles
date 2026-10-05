@@ -39,6 +39,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
+    if (!isValidGmail(_emailController.text)) {
+      setState(() => _error = gmailErrorMessage);
+      return;
+    }
+
     setState(() {
       _loading = true;
       _error = null;

@@ -59,12 +59,12 @@ void main() {
         expect(request.url.path, '/auth/register');
         final body = jsonDecode(request.body) as Map<String, dynamic>;
         expect(body['username'], 'juan');
-        expect(body['email'], 'juan@example.com');
+        expect(body['email'], 'juan@gmail.com');
         expect(body['password'], '12345678');
         return http.Response('', 201);
       });
 
-      await buildService(client).register('juan', 'juan@example.com', '12345678');
+      await buildService(client).register('juan', 'juan@gmail.com', '12345678');
     });
 
     test('register fallido lanza AuthException con el mensaje del backend', () async {
@@ -73,7 +73,7 @@ void main() {
       });
 
       expect(
-        () => buildService(client).register('juan', 'juan@example.com', '12345678'),
+        () => buildService(client).register('juan', 'juan@gmail.com', '12345678'),
         throwsA(
           isA<AuthException>().having(
             (e) => e.message,
@@ -82,6 +82,26 @@ void main() {
           ),
         ),
       );
+    });
+
+    test('register con correo que no es @gmail.com falla sin llamar al backend', () async {
+      var called = false;
+      final client = MockClient((request) async {
+        called = true;
+        return http.Response('', 201);
+      });
+
+      await expectLater(
+        () => buildService(client).register('marta', 'marta', '1234'),
+        throwsA(
+          isA<AuthException>().having(
+            (e) => e.message,
+            'message',
+            'Datos incorrectos: el correo debe terminar en @gmail.com',
+          ),
+        ),
+      );
+      expect(called, isFalse);
     });
 
     test('login exitoso guarda el token y lo retorna', () async {

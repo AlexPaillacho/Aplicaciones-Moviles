@@ -99,7 +99,10 @@ class Room {
       'active': active ? 1 : 0,
       'host_id': hostId,
       'host_username': hostUsername,
-      'updated_at': updatedAt.toIso8601String(),
+      // Siempre en UTC (con sufijo 'Z'): una fecha local sin zona se
+      // interpretaría como UTC en el servidor y desfasaría la detección
+      // de conflictos por el huso horario del dispositivo.
+      'updated_at': updatedAt.toUtc().toIso8601String(),
     };
   }
 

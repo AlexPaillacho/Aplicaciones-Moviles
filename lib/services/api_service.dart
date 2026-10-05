@@ -2,11 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, kReleaseMode;
 import 'package:http/http.dart' as http;
 
 import '../core/api_client.dart';
 import '../core/constants.dart';
+
 import 'connectivity_service.dart';
 import 'token_storage.dart';
 
@@ -100,7 +101,7 @@ class ApiService {
     TokenStorage? tokenStorage,
     ConnectivityService? connectivity,
   })  : baseUrl = baseUrl ?? AppConstants.apiBaseUrl,
-        _client = client ?? ApiClient().httpClient,
+        _injectedClient = client,
         _tokenStorage = tokenStorage ?? TokenStorage(),
         _connectivity = connectivity ?? ConnectivityService();
 
@@ -113,7 +114,18 @@ class ApiService {
   static final ApiService instance = ApiService();
 
   final String baseUrl;
-  final http.Client _client;
+
+  /// Cliente inyectado por los tests; en producción es `null` y se usa
+  /// el compartido de `ApiClient` (que puede recrearse, ver
+  /// [resetConnections]).
+  final http.Client? _injectedClient;
+  http.Client get _client => _injectedClient ?? ApiClient().httpClient;
+
+  /// Descarta las conexiones abiertas (ver `ApiClient.resetConnections`).
+  /// No hace nada con un cliente inyectado (tests).
+  void resetConnections() {
+    if (_injectedClient == null) ApiClient().resetConnections();
+  }
   final TokenStorage _tokenStorage;
 
   /// Usado únicamente para distinguir [NoConnectionException] de
@@ -168,7 +180,7 @@ class ApiService {
     } on TimeoutException {
       _logFailure(method, uri, stopwatch, 'timeout');
       throw const RequestTimeoutException();
-    } on SocketException {
+    } on SocketException catch (e) {
       // Mismo error de Dart para dos causas distintas: sin ninguna
       // interfaz de red activa (familia 1) vs. red activa pero backend
       // inalcanzable (familia 3). Solo `ConnectivityService` puede
@@ -176,11 +188,32 @@ class ApiService {
       final online = await _connectivity.isOnline();
       final exception =
           online ? const ServerUnavailableException() : const NoConnectionException();
-      _logFailure(method, uri, stopwatch, exception.message);
+      _logFailure(method, uri, stopwatch, '${exception.message} [$e]');
       throw exception;
     } on HttpException {
       _logFailure(method, uri, stopwatch, 'servidor caído (HttpException)');
       throw const ServerUnavailableException();
+    } on TlsException catch (e) {
+      // Conexión HTTPS cortada a mitad del handshake (típico justo al
+      // reconectar el wifi). Es un fallo de conexión, no de la
+      // operación: sin esto la cola offline lo marcaba como fallo
+      // definitivo en vez de reintentarlo.
+      final online = await _connectivity.isOnline();
+      final exception =
+          online ? const ServerUnavailableException() : const NoConnectionException();
+      _logFailure(method, uri, stopwatch, '${exception.message} [$e]');
+      throw exception;
+    } on http.ClientException catch (e) {
+      // `package:http` envuelve algunos fallos de red (conexión
+      // abortada/reseteada justo al reconectar el wifi, por ejemplo) en
+      // `ClientException`. Es un fallo de conexión, no un error de la
+      // operación: antes escapaba como error genérico y una sala creada
+      // sin conexión podía quedar marcada como "fallida" para siempre.
+      final online = await _connectivity.isOnline();
+      final exception =
+          online ? const ServerUnavailableException() : const NoConnectionException();
+      _logFailure(method, uri, stopwatch, '${exception.message} [$e]');
+      throw exception;
     }
 
     _logResponse(method, uri, stopwatch, response.statusCode);
@@ -211,17 +244,17 @@ class ApiService {
   /// desarrollo — ya sería una fuga. Por eso estos tres métodos solo
   /// reciben `method`, `uri` y `headers`, nunca el body.
   void _logRequest(String method, Uri uri, Map<String, String> headers) {
-    if (ApiClient.isProduction) return;
+    if (ApiClient.isProduction || kReleaseMode) return;
     debugPrint('[HTTP] --> $method ${uri.path} headers=${_redacted(headers)}');
   }
 
   void _logResponse(String method, Uri uri, Stopwatch stopwatch, int statusCode) {
-    if (ApiClient.isProduction) return;
+    if (ApiClient.isProduction || kReleaseMode) return;
     debugPrint('[HTTP] <-- $statusCode $method ${uri.path} (${stopwatch.elapsedMilliseconds}ms)');
   }
 
   void _logFailure(String method, Uri uri, Stopwatch stopwatch, String reason) {
-    if (ApiClient.isProduction) return;
+    if (ApiClient.isProduction || kReleaseMode) return;
     debugPrint(
       '[HTTP] <-- ERROR $method ${uri.path} (${stopwatch.elapsedMilliseconds}ms): $reason',
     );
@@ -423,6 +456,7 @@ class ApiService {
     String path, {
     required String fileField,
     required File file,
+    Map<String, String> fields = const {},
   }) {
     final uri = _buildUri(path);
     return _authorizedRequest(
@@ -431,6 +465,7 @@ class ApiService {
       (authHeader) async {
         final request = http.MultipartRequest('POST', uri)
           ..headers.addAll(authHeader)
+          ..fields.addAll(fields)
           ..files.add(await http.MultipartFile.fromPath(fileField, file.path));
 
         final streamedResponse = await _client.send(request);

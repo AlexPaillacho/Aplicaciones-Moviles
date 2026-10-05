@@ -8,8 +8,8 @@ import '../../state/auth_provider.dart';
 import '../../state/rooms_provider.dart';
 import '../../widgets/app_button.dart';
 import '../../widgets/app_card.dart';
-import '../../widgets/app_text_field.dart';
 import '../../widgets/permission_ui.dart';
+import '../../widgets/room_form_dialog.dart';
 import '../../widgets/status_view.dart';
 import 'room_detail_screen.dart';
 
@@ -295,11 +295,10 @@ class _RoomsListScreenState extends State<RoomsListScreen>
         // está concedido, lo que está apagado es el GPS del dispositivo.
         return PermissionNotice(
           icon: Icons.gps_off,
-          message: 'La app tiene permiso de ubicación, pero la ubicación '
-              'del dispositivo está apagada. Enciéndela para ver salas '
-              'cercanas.',
-          actionLabel: 'Abrir ajustes de ubicación',
-          actionIcon: Icons.settings,
+          message: 'La ubicación del dispositivo está apagada. Actívala para '
+              'ver salas cercanas.',
+          actionLabel: 'Salas cerca de ti',
+          actionIcon: Icons.location_on,
           onAction: _openLocationSettings,
         );
       case _NearbyState.error:
@@ -368,45 +367,109 @@ class _RoomsListScreenState extends State<RoomsListScreen>
 
   bool _creating = false;
 
+  /// Cierra la sesión y vuelve al login, borrando el historial de
+  /// navegación para que "atrás" no regrese a las salas.
+  Future<void> _logout() async {
+    final navigator = Navigator.of(context);
+    await context.read<AuthProvider>().logout();
+    navigator.pushNamedAndRemoveUntil('/login', (route) => false);
+  }
+
   Future<void> _showCreateDialog(BuildContext context) async {
-    final controller = TextEditingController();
     final provider = context.read<RoomsProvider>();
     final currentUser = context.read<AuthProvider>().currentUser;
 
-    final name = await showDialog<String>(
+    final result = await showDialog<RoomFormResult>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Nueva sala'),
-        content: AppTextField(controller: controller, label: 'Nombre de la sala'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
-            child: const Text('Crear'),
-          ),
-        ],
+      builder: (_) => const RoomFormDialog(
+        title: 'Nueva sala',
+        confirmLabel: 'Crear',
       ),
     );
+    if (result == null) return;
 
-    if (name != null) {
-      setState(() => _creating = true);
-      await provider.create(
-        name,
-        hostId: currentUser?.id,
-        hostUsername: currentUser?.username,
+    setState(() => _creating = true);
+    await provider.create(
+      result.name,
+      hostId: currentUser?.id,
+      hostUsername: currentUser?.username,
+    );
+    if (mounted) setState(() => _creating = false);
+
+    final syncError = provider.consumeLastSyncError();
+    if (syncError != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(syncError)),
       );
-      if (mounted) setState(() => _creating = false);
-
-      final syncError = provider.consumeLastSyncError();
-      if (syncError != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(syncError)),
-        );
-      }
     }
+  }
+
+  /// Aviso de estado de sincronización (modo local / reconectando /
+  /// pendientes / todo sincronizado). Nunca es un error: es el
+  /// comportamiento normal offline-first.
+  Widget _buildSyncBanner(RoomsProvider rooms) {
+    final IconData? icon;
+    final String text;
+    var spinner = false;
+    var success = false;
+
+    if (rooms.isReconnecting) {
+      icon = null;
+      spinner = true;
+      text = rooms.pendingCount > 0
+          ? 'Reconectando y sincronizando ${rooms.pendingCount} cambio(s)...'
+          : 'Reconectando...';
+    } else if (rooms.isOffline) {
+      icon = Icons.cloud_off;
+      final pending = rooms.pendingCount > 0
+          ? ' · ${rooms.pendingCount} pendiente(s) de sincronizar'
+          : '';
+      text = 'Modo local · ${_formatLastSynced(rooms.lastSyncedAt)}$pending'
+          '${rooms.pendingCount > 0 ? '\nSe sincronizará solo al volver la conexión.' : ''}';
+    } else if (rooms.pendingCount > 0) {
+      icon = Icons.sync;
+      text = '${rooms.pendingCount} cambio(s) por sincronizar';
+    } else if (rooms.showSyncedNotice) {
+      icon = Icons.cloud_done;
+      success = true;
+      text = 'Todo sincronizado con el servidor';
+    } else {
+      return const SizedBox.shrink();
+    }
+
+    final color =
+        success ? AppTokens.colorOnSuccessContainer : AppTokens.colorPrimary;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppTokens.spaceSM),
+      child: Semantics(
+        liveRegion: true,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(AppTokens.spaceSM),
+          decoration: BoxDecoration(
+            color: success
+                ? AppTokens.colorSuccessContainer
+                : AppTokens.colorPrimary.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(AppTokens.radiusCard),
+          ),
+          child: Row(
+            children: [
+              if (spinner)
+                const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                Icon(icon, size: 18, color: color),
+              const SizedBox(width: AppTokens.spaceSM),
+              Expanded(child: Text(text, style: AppTokens.textCaption)),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   String _formatLastSynced(DateTime? lastSyncedAt) {
@@ -432,7 +495,7 @@ class _RoomsListScreenState extends State<RoomsListScreen>
             label: 'Cerrar sesión',
             child: IconButton(
               icon: const Icon(Icons.logout),
-              onPressed: () => context.read<AuthProvider>().logout(),
+              onPressed: _logout,
             ),
           ),
         ],
@@ -442,39 +505,7 @@ class _RoomsListScreenState extends State<RoomsListScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (rooms.isOffline || rooms.pendingCount > 0)
-              Padding(
-                padding: const EdgeInsets.only(bottom: AppTokens.spaceSM),
-                child: Semantics(
-                  liveRegion: true,
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(AppTokens.spaceSM),
-                    decoration: BoxDecoration(
-                      color: AppTokens.colorPrimary.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(AppTokens.radiusCard),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          rooms.isOffline ? Icons.cloud_off : Icons.sync,
-                          size: 18,
-                          color: AppTokens.colorPrimary,
-                        ),
-                        const SizedBox(width: AppTokens.spaceSM),
-                        Expanded(
-                          child: Text(
-                            rooms.isOffline
-                                ? '${_formatLastSynced(rooms.lastSyncedAt)} · Sin conexión'
-                                : '${rooms.pendingCount} cambio(s) por sincronizar',
-                            style: AppTokens.textCaption,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+            _buildSyncBanner(rooms),
             AppButton(
               label: 'Nueva sala',
               icon: Icons.add,

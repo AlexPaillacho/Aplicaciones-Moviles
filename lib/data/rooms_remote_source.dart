@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import '../models/audio_submission.dart';
 import '../models/room.dart';
 import '../models/user_location.dart';
 import '../services/api_service.dart';
@@ -206,11 +207,21 @@ class RoomsRemoteSource {
 
   /// `POST /rooms/<id>/process-audio` (JWT, multipart, campo `audio`).
   /// Responde 202 con `{message, task_id, saved_file}`.
-  Future<Map<String, dynamic>> processAudio(int roomId, File audioFile) async {
+  ///
+  /// [durationSeconds] (opcional) es lo que duró la grabación; el backend
+  /// lo guarda para mostrarlo en el historial de envíos.
+  Future<Map<String, dynamic>> processAudio(
+    int roomId,
+    File audioFile, {
+    int? durationSeconds,
+  }) async {
     final response = await _apiService.authorizedMultipartPost(
       '/rooms/$roomId/process-audio',
       fileField: 'audio',
       file: audioFile,
+      fields: {
+        if (durationSeconds != null) 'duration_seconds': durationSeconds.toString(),
+      },
     );
 
     if (response.statusCode != 202) {
@@ -218,6 +229,37 @@ class RoomsRemoteSource {
     }
 
     return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  /// `GET /rooms/<id>/submissions?page=..&per_page=..` (JWT). Historial
+  /// paginado de los envíos de audio del usuario en la sala, del más
+  /// reciente al más antiguo.
+  Future<SubmissionsPage> listSubmissions(
+    int roomId, {
+    int page = 1,
+    int perPage = 10,
+  }) async {
+    final response = await _apiService.authorizedGet(
+      '/rooms/$roomId/submissions',
+      queryParameters: {
+        'page': page.toString(),
+        'per_page': perPage.toString(),
+      },
+    );
+
+    if (response.statusCode != 200) {
+      throw RoomException(_extractError(response.body));
+    }
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    return SubmissionsPage(
+      submissions: (data['submissions'] as List<dynamic>)
+          .map((s) => AudioSubmission.fromJson(s as Map<String, dynamic>))
+          .toList(),
+      page: data['page'] as int? ?? page,
+      totalPages: data['total_pages'] as int? ?? 1,
+      total: data['total'] as int? ?? 0,
+    );
   }
 
   /// `GET /tasks/<task_id>` (JWT). Responde `{task_id, state, result?, error?}`.

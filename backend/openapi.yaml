@@ -349,29 +349,63 @@ paths:
                 properties:
                   message: { type: string, example: "Audio processing started" }
                   task_id: { type: string }
-                  saved_file: { type: string, nullable: true }
+                  saved_file: { type: string }
+                  size_bytes: { type: integer, description: "Tamaño del audio recibido" }
                   submission_id: { type: integer }
+        '404':
+          description: La sala no existe
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: Falta el campo `audio`, o el archivo está vacío / es demasiado corto
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /rooms/{room_id}/submissions:
     get:
       tags: [rooms]
-      summary: Historial persistido de envíos de audio de una sala
+      summary: Historial paginado de los envíos de audio del usuario en una sala
+      description: >
+        Devuelve solo los envíos del usuario autenticado, del más reciente al
+        más antiguo. Los envíos que aún no terminaron se actualizan desde Celery.
       security:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/RoomId'
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: per_page
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
       responses:
         '200':
-          description: Envíos de audio de la sala
+          description: Página de envíos de audio
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   room_id: { type: integer }
+                  page: { type: integer }
+                  per_page: { type: integer }
+                  total: { type: integer }
+                  total_pages: { type: integer }
                   submissions:
                     type: array
                     items: { $ref: '#/components/schemas/AudioSubmission' }
+        '401':
+          description: Falta el token o expiró
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: La sala no existe
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /tasks/{task_id}:
     get:

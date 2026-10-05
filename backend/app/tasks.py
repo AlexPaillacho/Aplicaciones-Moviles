@@ -1,3 +1,4 @@
+import os
 import time
 
 from celery import Celery
@@ -16,6 +17,15 @@ celery_app.conf.update(
     accept_content=['json'],
     timezone='UTC',
 )
+
+# En Windows el pool por defecto (prefork) NO funciona con Celery 4+/5:
+# cada tarea termina en FAILURE con "ValueError: not enough values to
+# unpack (expected 3, got 0)". Eso hacía que la app mostrara "El
+# procesamiento del audio falló" aunque el audio sí se guardaba. El pool
+# `solo` ejecuta las tareas en el mismo proceso y funciona en Windows.
+if os.name == 'nt':
+    os.environ.setdefault('FORKED_BY_MULTIPROCESSING', '1')
+    celery_app.conf.worker_pool = 'solo'
 
 
 @celery_app.task(name='tasks.process_audio_session')

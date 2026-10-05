@@ -10,8 +10,14 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{access_token}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
@@ -20,9 +26,14 @@
         "url": {
           "raw": "http://localhost:5000/auth/register",
           "protocol": "http",
-          "host": ["localhost"],
+          "host": [
+            "localhost"
+          ],
           "port": "5000",
-          "path": ["auth", "register"]
+          "path": [
+            "auth",
+            "register"
+          ]
         }
       }
     },
@@ -31,7 +42,10 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
@@ -40,9 +54,14 @@
         "url": {
           "raw": "http://localhost:5000/auth/login",
           "protocol": "http",
-          "host": ["localhost"],
+          "host": [
+            "localhost"
+          ],
           "port": "5000",
-          "path": ["auth", "login"]
+          "path": [
+            "auth",
+            "login"
+          ]
         }
       }
     },
@@ -53,11 +72,19 @@
         "url": {
           "raw": "http://localhost:5000/rooms/list?optimized=false",
           "protocol": "http",
-          "host": ["localhost"],
+          "host": [
+            "localhost"
+          ],
           "port": "5000",
-          "path": ["rooms", "list"],
+          "path": [
+            "rooms",
+            "list"
+          ],
           "query": [
-            { "key": "optimized", "value": "false" }
+            {
+              "key": "optimized",
+              "value": "false"
+            }
           ]
         }
       }
@@ -69,11 +96,19 @@
         "url": {
           "raw": "http://localhost:5000/rooms/list?optimized=true",
           "protocol": "http",
-          "host": ["localhost"],
+          "host": [
+            "localhost"
+          ],
           "port": "5000",
-          "path": ["rooms", "list"],
+          "path": [
+            "rooms",
+            "list"
+          ],
           "query": [
-            { "key": "optimized", "value": "true" }
+            {
+              "key": "optimized",
+              "value": "true"
+            }
           ]
         }
       }
@@ -85,9 +120,14 @@
         "url": {
           "raw": "http://localhost:5000/rooms/1",
           "protocol": "http",
-          "host": ["localhost"],
+          "host": [
+            "localhost"
+          ],
           "port": "5000",
-          "path": ["rooms", "1"]
+          "path": [
+            "rooms",
+            "1"
+          ]
         }
       }
     },
@@ -98,9 +138,14 @@
         "url": {
           "raw": "http://localhost:5000/rooms/1",
           "protocol": "http",
-          "host": ["localhost"],
+          "host": [
+            "localhost"
+          ],
           "port": "5000",
-          "path": ["rooms", "1"]
+          "path": [
+            "rooms",
+            "1"
+          ]
         }
       }
     },
@@ -109,8 +154,14 @@
       "request": {
         "method": "PUT",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{access_token}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
@@ -119,9 +170,14 @@
         "url": {
           "raw": "http://localhost:5000/rooms/1",
           "protocol": "http",
-          "host": ["localhost"],
+          "host": [
+            "localhost"
+          ],
           "port": "5000",
-          "path": ["rooms", "1"]
+          "path": [
+            "rooms",
+            "1"
+          ]
         }
       }
     },
@@ -130,14 +186,22 @@
       "request": {
         "method": "DELETE",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{access_token}}" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
         ],
         "url": {
           "raw": "http://localhost:5000/rooms/1",
           "protocol": "http",
-          "host": ["localhost"],
+          "host": [
+            "localhost"
+          ],
           "port": "5000",
-          "path": ["rooms", "1"]
+          "path": [
+            "rooms",
+            "1"
+          ]
         }
       }
     },
@@ -146,8 +210,14 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{access_token}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
@@ -156,9 +226,74 @@
         "url": {
           "raw": "http://localhost:5000/rooms/1/process-audio",
           "protocol": "http",
-          "host": ["localhost"],
+          "host": [
+            "localhost"
+          ],
           "port": "5000",
-          "path": ["rooms", "1", "process-audio"]
+          "path": [
+            "rooms",
+            "1",
+            "process-audio"
+          ]
+        }
+      }
+    },
+    {
+      "name": "GET /rooms/<id>/submissions (historial paginado, requiere JWT)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:5000/rooms/1/submissions?page=1&per_page=10",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "5000",
+          "path": [
+            "rooms",
+            "1",
+            "submissions"
+          ],
+          "query": [
+            {
+              "key": "page",
+              "value": "1"
+            },
+            {
+              "key": "per_page",
+              "value": "10"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "GET /tasks/<task_id> (estado de la tarea, requiere JWT)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:5000/tasks/<task_id>",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "5000",
+          "path": [
+            "tasks",
+            "<task_id>"
+          ]
         }
       }
     },
@@ -170,13 +305,27 @@
         "url": {
           "raw": "http://localhost:5000/rooms/list?optimized=true&lat=40.42&lng=-3.70",
           "protocol": "http",
-          "host": ["localhost"],
+          "host": [
+            "localhost"
+          ],
           "port": "5000",
-          "path": ["rooms", "list"],
+          "path": [
+            "rooms",
+            "list"
+          ],
           "query": [
-            { "key": "optimized", "value": "true" },
-            { "key": "lat", "value": "40.42" },
-            { "key": "lng", "value": "-3.70" }
+            {
+              "key": "optimized",
+              "value": "true"
+            },
+            {
+              "key": "lat",
+              "value": "40.42"
+            },
+            {
+              "key": "lng",
+              "value": "-3.70"
+            }
           ]
         }
       }
@@ -186,8 +335,14 @@
       "request": {
         "method": "POST",
         "header": [
-          { "key": "Authorization", "value": "Bearer {{access_token}}" },
-          { "key": "Content-Type", "value": "application/json" }
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
         ],
         "body": {
           "mode": "raw",
@@ -196,12 +351,15 @@
         "url": {
           "raw": "http://localhost:5000/rooms",
           "protocol": "http",
-          "host": ["localhost"],
+          "host": [
+            "localhost"
+          ],
           "port": "5000",
-          "path": ["rooms"]
+          "path": [
+            "rooms"
+          ]
         }
       }
     }
   ]
 }
-

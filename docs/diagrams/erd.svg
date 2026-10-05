@@ -1,11 +1,11 @@
-<svg viewBox="0 0 980 620" xmlns="http://www.w3.org/2000/svg" font-family="Consolas, 'Courier New', monospace">
+<svg viewBox="0 0 980 650" xmlns="http://www.w3.org/2000/svg" font-family="Consolas, 'Courier New', monospace">
   <defs>
     <marker id="crow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10" fill="none" stroke="#37474F" stroke-width="1.4"/>
     </marker>
   </defs>
 
-  <rect x="0" y="0" width="980" height="620" fill="#FFFFFF"/>
+  <rect x="0" y="0" width="980" height="650" fill="#FFFFFF"/>
   <text x="20" y="30" font-size="18" font-weight="bold" fill="#1A237E">ERD — Speak English (3 tablas, 3FN)</text>
 
   <!-- ===== users ===== -->
@@ -54,7 +54,7 @@
   <!-- ===== relaciones ===== -->
   <!-- users -> rooms (host_id), 1..N -->
   <path d="M 340 130 C 480 110, 520 130, 620 155" fill="none" stroke="#37474F" stroke-width="1.4" marker-end="url(#crow)"/>
-  <text x="460" y="105" font-size="12" fill="#37474F">1 users → N rooms (host_id)</text>
+  <text x="400" y="88" font-size="12" fill="#37474F">1 users → N rooms (host_id)</text>
 
   <!-- users -> audio_submissions (user_id), 1..N -->
   <path d="M 190 252 C 190 340, 320 380, 380 400" fill="none" stroke="#37474F" stroke-width="1.4" marker-end="url(#crow)"/>
@@ -64,5 +64,5 @@
   <path d="M 780 300 C 780 380, 650 400, 600 405" fill="none" stroke="#37474F" stroke-width="1.4" marker-end="url(#crow)"/>
   <text x="640" y="350" font-size="12" fill="#37474F">1 rooms → N audio_submissions (room_id)</text>
 
-  <text x="20" y="618" font-size="11.5" fill="#546454">Integridad referencial vía FKs reales · índices en las columnas por las que se filtra (active, email, task_id, status, created_at)</text>
+  <text x="20" y="642" font-size="11.5" fill="#546454">Integridad referencial vía FKs reales · índices en las columnas por las que se filtra (active, email, task_id, status, created_at)</text>
 </svg>

@@ -1,8 +1,12 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 
 import '../data/rooms_repository.dart';
 import '../models/room.dart';
 import '../models/user_location.dart';
+import '../services/connectivity_service.dart';
 
 /// Estado global de la lista de salas — offline-first (taller Semana 12).
 ///
@@ -13,9 +17,17 @@ import '../models/user_location.dart';
 /// el estado de UI (`rooms`, `isLoading`, `isOffline`, etc.) y notifica a
 /// los widgets. No sabe, ni le importa, de dónde vino cada `Room`.
 class RoomsProvider extends ChangeNotifier {
-  RoomsProvider({RoomsRepository? repository}) : _repository = repository ?? RoomsRepository();
+  RoomsProvider({RoomsRepository? repository, ConnectivityService? connectivity})
+      : _repository = repository ?? RoomsRepository(),
+        _connectivity = connectivity ?? ConnectivityService();
 
   final RoomsRepository _repository;
+  final ConnectivityService _connectivity;
+
+  bool _isReconnecting = false;
+  bool _reconnectLoopActive = false;
+  bool _showSyncedNotice = false;
+  Timer? _noticeTimer;
 
   List<Room> _rooms = [];
   bool _isLoading = false;
@@ -30,6 +42,15 @@ class RoomsProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
   bool get isOffline => _isOffline;
+
+  /// `true` mientras la app, ya con red, intenta sincronizar la cola y
+  /// refrescar la lista tras haber estado sin conexión (ej. al quitar el
+  /// modo avión). La UI muestra "Reconectando..." en vez de un error.
+  bool get isReconnecting => _isReconnecting;
+
+  /// `true` unos segundos después de que la cola pendiente se sincronizó
+  /// por completo: la UI muestra "Todo sincronizado".
+  bool get showSyncedNotice => _showSyncedNotice;
   DateTime? get lastSyncedAt => _lastSyncedAt;
   int get pendingCount => _pendingCount;
 
@@ -59,16 +80,30 @@ class RoomsProvider extends ChangeNotifier {
 
   /// `GET /rooms/list` con caída a caché. Se llama al entrar a la
   /// pantalla y en el pull-to-refresh.
-  Future<void> refresh() async {
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
+  ///
+  /// Con [silent] no se muestra el loader ni se publica ningún error de
+  /// red (se usa en los reintentos automáticos al reconectar).
+  Future<void> refresh({bool silent = false}) async {
+    if (!silent) {
+      _isLoading = true;
+      _errorMessage = null;
+      notifyListeners();
+    }
 
     final outcome = await _repository.refresh();
-    _isOffline = outcome.isOffline;
-    _errorMessage = outcome.errorMessage;
-
     await _reloadFromRepository();
+
+    if (outcome.serverUnreachable) {
+      // Hay red pero el servidor no respondió (típico justo al quitar el
+      // modo avión, antes de que el wifi termine de conectar). Si hay
+      // datos en caché se sigue en modo local y se reintenta solo; el
+      // error a pantalla completa solo aparece si NO hay nada que mostrar.
+      _isOffline = true;
+      _errorMessage = (_rooms.isEmpty && !silent) ? outcome.errorMessage : null;
+    } else {
+      _isOffline = outcome.isOffline;
+      _errorMessage = outcome.errorMessage;
+    }
 
     _isLoading = false;
     notifyListeners();
@@ -143,6 +178,10 @@ class RoomsProvider extends ChangeNotifier {
   /// crear/editar, tras un `refresh()` exitoso, y desde `app.dart` al
   /// detectar reconexión.
   Future<void> trySyncPending() async {
+    await _runSync();
+  }
+
+  Future<RoomsSyncOutcome> _runSync() async {
     try {
       final outcome = await _repository.trySyncPending();
       if (outcome.errorMessage != null) {
@@ -151,13 +190,113 @@ class RoomsProvider extends ChangeNotifier {
       if (outcome.syncedAny) {
         await _reloadFromRepository();
       }
-      if (outcome.syncedAny || outcome.errorMessage != null) {
+      if (outcome.networkFailed && !_isOffline) {
+        // Quedaron cambios en la cola por falta de red: se refleja en el
+        // aviso de la pantalla (modo local, pendientes de sincronizar).
+        _isOffline = true;
+        notifyListeners();
+      } else if (outcome.syncedAny || outcome.errorMessage != null) {
+        // Si el servidor respondió, hay conexión: se sale de "modo local"
+        // sin esperar al próximo refresh (antes el aviso se quedaba
+        // pegado aunque los cambios ya se hubieran sincronizado).
+        if (outcome.syncedAny && !outcome.networkFailed) _isOffline = false;
         notifyListeners();
       }
+      if (outcome.syncedAny && _pendingCount == 0 && !outcome.networkFailed) {
+        _flashSyncedNotice();
+      }
+      return outcome;
     } catch (_) {
       // La sincronización es best-effort; un fallo acá no debe romper
       // la UI. La cola queda intacta para el próximo intento.
+      return const RoomsSyncOutcome();
     }
+  }
+
+  void _flashSyncedNotice() {
+    _showSyncedNotice = true;
+    notifyListeners();
+    _noticeTimer?.cancel();
+    _noticeTimer = Timer(const Duration(seconds: 4), () {
+      _showSyncedNotice = false;
+      notifyListeners();
+    });
+  }
+
+  /// El dispositivo perdió la conexión (ej. modo avión): se pasa a modo
+  /// local al instante, sin esperar a que falle una petición.
+  void markOffline() {
+    if (_isOffline) return;
+    _isOffline = true;
+    notifyListeners();
+  }
+
+  /// Se llama cuando el dispositivo recupera red (ej. al quitar el modo
+  /// avión) y también periódicamente mientras haya cambios pendientes.
+  ///
+  /// La señal de "hay conexión" suele llegar ANTES de que el wifi esté
+  /// realmente usable, así que un único intento falla con "no se pudo
+  /// conectar con el servidor". Por eso aquí se reintenta con espera
+  /// creciente (2, 4, 6, 8 s...) hasta lograr sincronizar la cola y
+  /// refrescar la lista, SIN mostrar errores al usuario mientras tanto:
+  /// solo el aviso "Reconectando...".
+  Future<void> syncAfterReconnect() async {
+    if (_reconnectLoopActive) return;
+    _reconnectLoopActive = true;
+
+    try {
+      // Los sockets abiertos antes del corte (modo avión / cambio de red)
+      // quedan muertos: se descartan para que los intentos usen
+      // conexiones nuevas.
+      _repository.resetNetwork();
+
+      // Las operaciones que se dieron por vencidas mientras no había red
+      // vuelven a la cola: con conexión se reintentan.
+      await _repository.reviveFailedOperations();
+      await _reloadFromRepository();
+      notifyListeners();
+
+      const maxAttempts = 8;
+      for (var attempt = 0; attempt < maxAttempts; attempt++) {
+        if (!await _connectivity.isOnline()) {
+          // Volvió a quedar sin red: se espera la próxima señal.
+          markOffline();
+          break;
+        }
+
+        _isReconnecting = true;
+        notifyListeners();
+
+        final outcome = await _runSync();
+        if (!outcome.networkFailed) {
+          await refresh(silent: true); // también reintenta la cola si hay red
+          if (!_isOffline && _pendingCount == 0) break;
+        }
+
+        // Entre intentos la UI deja de mostrar el spinner (queda el aviso
+        // de "modo local, reintentando") para no parecer colgada.
+        _isReconnecting = false;
+        notifyListeners();
+
+        final seconds = math.min(2 + attempt * 2, 8);
+        await Future<void>.delayed(Duration(seconds: seconds));
+        if (attempt >= 1) _repository.resetNetwork();
+      }
+    } finally {
+      _isReconnecting = false;
+      _reconnectLoopActive = false;
+      notifyListeners();
+    }
+  }
+
+  /// Red de seguridad periódica (la dispara `app.dart`): si hay cambios
+  /// pendientes o seguimos en modo local pero el dispositivo ya tiene red,
+  /// reintenta la sincronización aunque no haya llegado ninguna señal.
+  Future<void> retryIfNeeded() async {
+    if (_reconnectLoopActive || _isLoading) return;
+    if (_pendingCount == 0 && !_isOffline) return;
+    if (!await _connectivity.isOnline()) return;
+    await syncAfterReconnect();
   }
 
   Future<void> _reloadFromRepository() async {
@@ -174,6 +313,13 @@ class RoomsProvider extends ChangeNotifier {
     _lastSyncedAt = null;
     _pendingCount = 0;
     _isOffline = false;
+    _showSyncedNotice = false;
     notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _noticeTimer?.cancel();
+    super.dispose();
   }
 }

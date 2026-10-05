@@ -10,6 +10,9 @@ def main():
     app = create_app()
 
     with app.app_context():
+        # 0) Tablas (no hace nada si ya existen)
+        db.create_all()
+
         # 1) Usuario de prueba (solo si no existe ya, buscando por email)
         email = "alex@example.com"
         user = User.query.filter_by(email=email).first()
